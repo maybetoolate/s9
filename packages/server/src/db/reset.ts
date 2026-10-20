@@ -14,18 +14,3 @@ export async function resetDatabase(): Promise<void> {
     client.release();
   }
 }
-
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) {
-  resetDatabase()
-    .then(async () => {
-      logger.info('database reset');
-      await closePool();
-      process.exit(0);
-    })
-    .catch(async (error) => {
-      logger.error({ err: error }, 'database reset failed');
-      await closePool();
-      process.exit(1);
-    });
-}

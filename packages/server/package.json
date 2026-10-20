@@ -14,9 +14,9 @@
     "start:api": "node dist/main-api.js",
     "start:worker": "node dist/main-worker.js",
     "start:scheduler": "node dist/main-scheduler.js",
-    "db:migrate": "tsx --tsconfig ../../tsconfig.json src/db/migrate.ts",
-    "db:seed": "tsx --tsconfig ../../tsconfig.json src/db/seed.ts",
-    "db:reset": "tsx --tsconfig ../../tsconfig.json src/db/reset.ts",
+    "db:migrate": "tsx --tsconfig ../../tsconfig.json src/cli/migrate.ts",
+    "db:seed": "tsx --tsconfig ../../tsconfig.json src/cli/seed.ts",
+    "db:reset": "tsx --tsconfig ../../tsconfig.json src/cli/reset.ts",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration"

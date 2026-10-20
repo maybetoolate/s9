@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closePool, getPool } from './pool.js';
@@ -12,7 +12,39 @@ import { logger } from '../lib/logger.js';
  * CI contract, so the runner must be idempotent and safe to re-run.
  */
 
-const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../migrations');
+/**
+ * Finds the migrations directory.
+ *
+ * The runner is executed from the source tree in development
+ * (`src/db/migrate.ts`) and from the bundled output in a container
+ * (`dist/main-api.js`), so the directory is located by walking up from the
+ * module instead of by a fixed relative path.
+ */
+function resolveMigrationsDir(): string {
+  const candidates: string[] = [];
+
+  let directory = dirname(fileURLToPath(import.meta.url));
+  for (let depth = 0; depth < 6; depth += 1) {
+    candidates.push(join(directory, 'migrations'));
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  candidates.push(resolve(process.cwd(), 'migrations'));
+  candidates.push(resolve(process.cwd(), 'packages/server/migrations'));
+
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    if (readdirSync(candidate).some((file) => file.endsWith('.sql'))) return candidate;
+  }
+
+  throw new Error(
+    `the migrations directory could not be found (looked in: ${candidates.join(', ')})`,
+  );
+}
+
+const migrationsDir = resolveMigrationsDir();
 
 export interface MigrationResult {
   applied: string[];
@@ -33,7 +65,7 @@ export async function runMigrations(options: { log?: boolean } = {}): Promise<Mi
       )
     `);
 
-    const files = (await readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
+    const files = readdirSync(migrationsDir).filter((file) => file.endsWith('.sql')).sort();
 
     for (const file of files) {
       const already = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
@@ -42,7 +74,7 @@ export async function runMigrations(options: { log?: boolean } = {}): Promise<Mi
         continue;
       }
 
-      const sql = await readFile(join(migrationsDir, file), 'utf8');
+      const sql = readFileSync(join(migrationsDir, file), 'utf8');
       // Each migration runs in its own transaction so a failure does not leave
       // a half applied schema behind.
       await client.query('BEGIN');
@@ -62,19 +94,4 @@ export async function runMigrations(options: { log?: boolean } = {}): Promise<Mi
   }
 
   return { applied, skipped };
-}
-
-const isMain = process.argv[1] && import.meta.url === `file://${resolve(process.argv[1])}`;
-if (isMain) {
-  runMigrations()
-    .then(async (result) => {
-      logger.info({ applied: result.applied, skipped: result.skipped.length }, 'migrations complete');
-      await closePool();
-      process.exit(0);
-    })
-    .catch(async (error) => {
-      logger.error({ err: error }, 'migrations failed');
-      await closePool();
-      process.exit(1);
-    });
 }

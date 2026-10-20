@@ -33,6 +33,8 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/packages/core/node_modules packages/core/node_modules
 COPY --from=build /app/packages/server/dist packages/server/dist
+# The API applies the migrations on start, so they travel with the image.
+COPY --from=build /app/packages/server/migrations packages/server/migrations
 
 EXPOSE 4000
 CMD ["node", "packages/server/dist/main-api.js"]

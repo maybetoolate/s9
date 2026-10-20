@@ -28,6 +28,7 @@ Sign in with `operator@flowforge.local` / `flowforge-demo-password`.
 | `pnpm dev` | Start the API, the worker, the scheduler and the web app |
 | `pnpm db:migrate` | Apply the pending migrations |
 | `pnpm db:seed` | Create the demo workspace, the operator and the demo workflow |
+| `docker compose exec api node packages/server/dist/cli-seed.js` | The same, inside the container network |
 | `pnpm db:reset` | Drop and recreate the public schema |
 | `pnpm test` | The unit and integration suites |
 | `pnpm typecheck` | Typecheck every package |
@@ -52,6 +53,7 @@ Sign in with `operator@flowforge.local` / `flowforge-demo-password`.
 | `MAILPIT_URL` | `http://localhost:8025` | The local mail catcher |
 | `RESEND_API_KEY` | — | Required for the `resend` provider |
 | `ALLOWED_PRIVATE_HOSTS` | — | Comma separated hostnames that may resolve to a private address |
+| `DEMO_NOTIFICATION_URL` | `http://localhost:8081/notify` | The destination of the demo workflow's notification step |
 | `DEMO_NOTIFICATION_URL` | `http://localhost:8081/notify` | The destination of the demo workflow |
 
 Generate the two secrets:
@@ -104,6 +106,12 @@ curl -s http://localhost:4100/api/ops/queue   # needs a session
 
 The queue counters show the waiting, active, delayed and failed jobs, the outbox counters and the worker heartbeats. A
 worker that has not sent a heartbeat for more than a minute is dead.
+
+### The demo workflow fails on the notification step
+
+The demo workflow stores `DEMO_NOTIFICATION_URL` in its definition, so the value has to be reachable **from the
+worker**. Run the seed in the same environment as the worker: on the host it is `http://localhost:8081/notify`, inside
+the compose network it is `http://sink:8080/notify`. The seed warns when the destination is not reachable.
 
 ### A webhook returns 401
 

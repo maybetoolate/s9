@@ -68,9 +68,9 @@ services:
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
       SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-mailpit}
-      MAILPIT_URL: ${MAILPIT_URL:-http://mailpit:8025}
-      ALLOWED_PRIVATE_HOSTS: ${ALLOWED_PRIVATE_HOSTS:-sink,localhost,127.0.0.1}
-      DEMO_NOTIFICATION_URL: ${DEMO_NOTIFICATION_URL:-http://sink:8080/notify}
+      MAILPIT_URL: http://mailpit:8025
+      ALLOWED_PRIVATE_HOSTS: sink,mailpit,localhost,127.0.0.1
+      DEMO_NOTIFICATION_URL: http://sink:8080/notify
     ports:
       - "4100:4000"
     depends_on:
@@ -95,9 +95,9 @@ services:
       WORKER_ID: worker-1
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-mailpit}
-      MAILPIT_URL: ${MAILPIT_URL:-http://mailpit:8025}
-      ALLOWED_PRIVATE_HOSTS: ${ALLOWED_PRIVATE_HOSTS:-sink,localhost,127.0.0.1}
-      DEMO_NOTIFICATION_URL: ${DEMO_NOTIFICATION_URL:-http://sink:8080/notify}
+      MAILPIT_URL: http://mailpit:8025
+      ALLOWED_PRIVATE_HOSTS: sink,mailpit,localhost,127.0.0.1
+      DEMO_NOTIFICATION_URL: http://sink:8080/notify
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,9 +118,9 @@ services:
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
       SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-mailpit}
-      MAILPIT_URL: ${MAILPIT_URL:-http://mailpit:8025}
-      ALLOWED_PRIVATE_HOSTS: ${ALLOWED_PRIVATE_HOSTS:-sink,localhost,127.0.0.1}
-      DEMO_NOTIFICATION_URL: ${DEMO_NOTIFICATION_URL:-http://sink:8080/notify}
+      MAILPIT_URL: http://mailpit:8025
+      ALLOWED_PRIVATE_HOSTS: sink,mailpit,localhost,127.0.0.1
+      DEMO_NOTIFICATION_URL: http://sink:8080/notify
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,7 +131,7 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
-    command: ["node", "packages/web/dist/server.js"]
+    command: ["node", "packages/web/server.js"]
     environment:
       NODE_ENV: production
       API_INTERNAL_URL: http://api:4000

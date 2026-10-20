@@ -69,11 +69,18 @@ password: flowforge-demo-password
 ### Everything in Docker
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+
+# Seed inside the container network: the demo workflow stores the address of
+# the demo sink, and the worker has to be able to reach it.
+docker compose exec api node packages/server/dist/cli-seed.js
 ```
 
-This starts `web`, `api`, `worker`, `scheduler`, `postgres`, `redis` and `mailpit`. The API applies its migrations on
-start.
+This starts `web`, `api`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit` and `sink`. The API applies its migrations
+on start.
+
+The seed has to run in the same environment as the worker: it stores the demo notification destination in the workflow
+definition, and the worker has to be able to reach it. The seed warns when the destination is not reachable.
 
 ### One-command database reset
 

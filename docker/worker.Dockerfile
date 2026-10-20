@@ -32,5 +32,6 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/packages/core/node_modules packages/core/node_modules
 COPY --from=build /app/packages/server/dist packages/server/dist
+COPY --from=build /app/packages/server/migrations packages/server/migrations
 
 CMD ["node", "packages/server/dist/main-worker.js"]

@@ -172,7 +172,25 @@ async function seed(): Promise<void> {
     { workflowId: workflow.id, slug: workflow.slug },
     'the demo workflow was created (publish it from the UI to activate it)',
   );
+  await warnIfUnreachable(env().DEMO_NOTIFICATION_URL);
   await printSummary(workspaceId, userId, secret);
+}
+
+/**
+ * Warns when the demo notification destination is not reachable.
+ *
+ * The seed stores the destination in the workflow definition, so it has to be
+ * reachable from the worker, not from the process that seeds the database.
+ */
+async function warnIfUnreachable(url: string): Promise<void> {
+  try {
+    await fetch(url, { method: 'POST', body: '{}', signal: AbortSignal.timeout(2_000) });
+  } catch {
+    logger.warn(
+      { url },
+      'the demo notification destination is not reachable from here; run the seed in the environment where the worker runs, or set DEMO_NOTIFICATION_URL',
+    );
+  }
 }
 
 async function printSummary(
@@ -201,19 +219,6 @@ async function printSummary(
   );
 }
 
-const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) {
-  seed()
-    .then(async () => {
-      await closePool();
-      process.exit(0);
-    })
-    .catch(async (error) => {
-      logger.error({ err: error }, 'the seed failed');
-      await closePool();
-      process.exit(1);
-    });
-}
 
 export { seed, DEMO_DEFINITION };
 export { getDraft };
