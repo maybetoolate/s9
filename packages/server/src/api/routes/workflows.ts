@@ -5,6 +5,7 @@ import {
   hashWebhookSecret,
   isPublishable,
   randomSlug,
+  signWebhookPayload,
   validateDefinition,
   WorkflowDefinitionSchema,
   type TriggerType,
@@ -36,7 +37,7 @@ import { toDraftDto, toScheduleDto, toVersionDto, toWebhookEndpointDto, toWorkfl
 import { createExecution } from '../../engine/execution-service.js';
 import { computeNextRun } from '../../engine/scheduler.js';
 import { env } from '../../config/env.js';
-import { encrypt } from '../../lib/secrets.js';
+import { decrypt, encrypt } from '../../lib/secrets.js';
 
 /**
  * Workflow routes.
@@ -288,6 +289,102 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       // The webhook secret is shown exactly once, when it is created.
       webhookSecret: result.webhookSecret,
       webhookEndpoint: endpoint ? toWebhookEndpointDto(endpoint, env().API_PUBLIC_URL) : null,
+    };
+  });
+
+  /**
+   * Sends a signed test delivery to the workflow's own webhook endpoint.
+   *
+   * The server signs the request exactly like an external sender would, so
+   * the operator can see the signature format, confirm that the endpoint
+   * accepts the delivery and open the resulting execution. The delivery goes
+   * through the real intake path, so the workflow runs for real.
+   */
+  app.post('/api/workflows/:id/webhook/test-delivery', async (request, reply) => {
+    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({ payload: z.record(z.string(), z.unknown()).optional() })
+      .parse(request.body ?? {});
+
+    const db = getPool();
+    const endpoint = await getWebhookEndpointByWorkflow(db, id);
+    if (!endpoint) throw ApiError.notFound('the workflow has no webhook endpoint');
+    if (!endpoint.encrypted_secret) {
+      throw ApiError.conflict('the endpoint has no signing secret', 'no_signing_secret');
+    }
+
+    const workflow = await getWorkflow(db, ctx.workspaceId, id);
+    if (!workflow) throw ApiError.notFound('workflow not found');
+
+    const payload = body.payload ?? {
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+      message: 'A test delivery from the FlowForge operator console.',
+    };
+    const rawBody = JSON.stringify(payload);
+    const timestamp = Date.now();
+    const secret = decrypt(endpoint.encrypted_secret);
+    const signature = signWebhookPayload(secret, timestamp, rawBody);
+    const signatureHeader = `t=${timestamp},v1=${signature}`;
+
+    // The delivery is addressed to this API process, so it works both on the
+    // host and inside a container.
+    const selfUrl = env().API_SELF_URL ?? `http://127.0.0.1:${env().API_PORT}`;
+    const target = new URL(`/webhooks/${endpoint.slug}`, selfUrl);
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(target, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-flowforge-signature': signatureHeader,
+          'idempotency-key': `test-delivery:${randomUUID()}`,
+        },
+        body: rawBody,
+      });
+    } catch (error) {
+      throw new ApiError(
+        502,
+        'delivery_failed',
+        `the webhook endpoint could not be reached: ${(error as Error).message}`,
+      );
+    }
+
+    const responseBody = (await upstream.json().catch(() => null)) as { executionId?: string } | null;
+
+    await withTransaction(async (client) => {
+      await insertAuditEvent(client, {
+        workspaceId: ctx.workspaceId,
+        actorId: ctx.userId,
+        actorType: 'user',
+        action: 'workflow.webhook_test_delivery',
+        targetType: 'workflow',
+        targetId: id,
+        metadata: { status: upstream.status, executionId: responseBody?.executionId ?? null },
+      });
+    });
+
+    reply.status(upstream.status);
+    return {
+      status: upstream.status,
+      accepted: upstream.status === 202,
+      executionId: responseBody?.executionId ?? null,
+      response: responseBody,
+      // Everything the sender needs to reproduce the request.
+      request: {
+        method: 'POST',
+        url: `${env().API_PUBLIC_URL}/webhooks/${endpoint.slug}`,
+        headers: {
+          'content-type': 'application/json',
+          'x-flowforge-signature': signatureHeader,
+          'idempotency-key': '<a unique id per delivery>',
+        },
+        body: rawBody,
+        timestamp,
+        signature,
+      },
     };
   });
 

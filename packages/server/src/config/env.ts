@@ -22,6 +22,13 @@ const EnvSchema = z.object({
   API_PUBLIC_URL: z.string().default('http://localhost:4100'),
   /** Public base URL of the web app. */
   WEB_PUBLIC_URL: z.string().default('http://localhost:3000'),
+  /**
+   * The address the API uses to deliver to its own webhook intake.
+   *
+   * Defaults to the loopback interface on the API port, which works both on
+   * the host and inside a container.
+   */
+  API_SELF_URL: z.string().optional(),
 
   /** Better-Auth secret used to sign sessions. */
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 characters'),

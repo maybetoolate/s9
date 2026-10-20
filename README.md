@@ -112,6 +112,11 @@ curl -i -X POST "http://localhost:4100/webhooks/<slug>" \
 You get `202 Accepted` with an execution id. Open the execution in the UI to watch the steps run, and repeat the
 request with the same idempotency key to see the duplicate being rejected with `200`.
 
+The signature is computed by the **sender**: it is the hex HMAC-SHA256 of `<timestamp>.<body>`, keyed with the endpoint
+secret, sent as `X-FlowForge-Signature: t=<unix-ms>,v1=<hex>`. The secret is shown once when the endpoint is created;
+if you no longer have it, rotate it in the workflow's **Webhook** tab. The same tab has a **Send a signed test
+delivery** button that signs and delivers a sample payload and shows you the exact request it sent.
+
 ---
 
 ## Repository layout

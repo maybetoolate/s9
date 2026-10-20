@@ -136,6 +136,37 @@ The signature does not match. The signed payload is `<timestamp>.<raw body>` —
 re-serialised JSON. The timestamp is in milliseconds and the tolerance is five minutes. After a rotation the previous
 secret stays valid for one hour.
 
+### How do I sign a webhook request?
+
+The signature is computed by the **sender**; FlowForge never hands it out. The sender holds the endpoint secret and
+signs the request:
+
+```
+signature = HMAC_SHA256(secret, "<timestamp>.<raw body>")
+```
+
+The timestamp is unix milliseconds, the signed payload is the timestamp, a dot and the **exact bytes of the body**, and
+the hex digest is sent as `X-FlowForge-Signature: t=<ts>,v1=<hex>`. The timestamp tolerance is five minutes.
+
+```bash
+SECRET="whsec_..."
+BODY='{"name":"Ada","email":"ada@example.com"}'
+TS=$(date +%s000)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')
+
+curl -X POST "$WEBHOOK_URL" \
+  -H "content-type: application/json" \
+  -H "idempotency-key: $(uuidgen)" \
+  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -d "$BODY"
+```
+
+Sign the bytes you actually send. Re-serialising the JSON produces a different body, and therefore a different
+signature.
+
+To see the exact request without building it yourself, use **Send a signed test delivery** in the workflow's Webhook
+tab.
+
 ### A webhook returns 409
 
 The workflow is paused. Pausing stops the creation of new production runs; the sender should retry later.

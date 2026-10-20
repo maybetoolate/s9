@@ -14,6 +14,8 @@ import {
 import { getPool } from '../../src/db/pool.js';
 import { listStepExecutions } from '../../src/db/repo.js';
 import { closePool } from '../../src/db/pool.js';
+import { decrypt } from '../../src/lib/secrets.js';
+import { resetEnvCache } from '../../src/config/env.js';
 
 /**
  * End-to-end behaviour of the execution pipeline, driven through the real
@@ -76,6 +78,9 @@ describe('execution pipeline', () => {
   });
 
   beforeEach(async () => {
+    // The provider simulator is shared, so its queued failures and hangs are
+    // cleared before every test.
+    server.reset();
     const app = await buildServer();
     context = await createSession(app, `operator-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`);
   });
@@ -534,6 +539,70 @@ describe('execution pipeline', () => {
     });
 
     expect(response.statusCode).toBe(404);
+  });
+
+  it('signs a test delivery with the endpoint secret', async () => {
+    const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
+
+    // The test delivery is sent over a real socket to this API process, so
+    // the test app has to listen for real.
+    const address = await context.app.listen({ port: 0, host: '127.0.0.1' });
+    process.env.API_SELF_URL = address;
+    resetEnvCache();
+
+    const response = await context.app.inject({
+      method: 'POST',
+      url: `/api/workflows/${workflow.id}/webhook/test-delivery`,
+      headers: { cookie: context.cookie },
+      payload: { payload: { name: 'Ada', email: 'ada@example.com' } },
+    });
+
+    if (response.statusCode !== 202) {
+      throw new Error(`unexpected response ${response.statusCode}: ${response.body}`);
+    }
+    const body = response.json() as {
+      status: number;
+      accepted: boolean;
+      executionId: string | null;
+      request: { headers: Record<string, string>; body: string; timestamp: number; signature: string };
+    };
+
+    expect(body.accepted).toBe(true);
+    expect(body.executionId).toBeTruthy();
+
+    // The signature is the hex HMAC-SHA256 of "<timestamp>.<body>", keyed with
+    // the endpoint secret, exactly like an external sender would compute it.
+    const signatureHeader = body.request.headers['x-flowforge-signature'];
+    expect(signatureHeader).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+
+    const db = getPool();
+    const endpoint = await db.query<{ encrypted_secret: { ciphertext: string; iv: string; authTag: string; keyId: string; version: 1 } }>(
+      'SELECT encrypted_secret FROM webhook_endpoints WHERE workflow_id = $1',
+      [workflow.id],
+    );
+    const secret = decrypt(endpoint.rows[0]!.encrypted_secret);
+    const expected = signWebhookPayload(secret, body.request.timestamp, body.request.body);
+    expect(body.request.signature).toBe(expected);
+
+    // The delivery was accepted and queued. No worker runs in the test, so the
+    // continuation is driven by hand.
+    const execution = await db.query<{ status: string }>('SELECT status FROM executions WHERE id = $1', [
+      body.executionId,
+    ]);
+    expect(execution.rows[0]?.status).toBe('queued');
+
+    await publishOutbox();
+    const result = await runContinuation(body.executionId!);
+    expect(result).toBe('completed');
+
+    const finished = await db.query<{ status: string }>('SELECT status FROM executions WHERE id = $1', [
+      body.executionId,
+    ]);
+    expect(finished.rows[0]?.status).toBe('succeeded');
+
+    await context.app.close();
+    delete process.env.API_SELF_URL;
+    resetEnvCache();
   });
 
   it('publishes queued work through the outbox', async () => {

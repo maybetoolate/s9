@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -15,6 +16,7 @@ import {
   Plus,
   Rocket,
   Save,
+  Send,
   Trash2,
 } from 'lucide-react';
 import type { ActionTypeDto, WorkflowDefinition, WorkflowDetailDto } from '@flowforge/core';
@@ -52,6 +54,21 @@ import { HeaderMapField, MappedField, type VariableOption } from './step-config-
  * every run has to be understandable and every step recoverable.
  */
 
+interface TestDelivery {
+  status: number;
+  accepted: boolean;
+  executionId: string | null;
+  response?: unknown;
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: string;
+    timestamp: number;
+    signature: string;
+  };
+}
+
 interface ValidationIssue {
   code: string;
   message: string;
@@ -88,6 +105,8 @@ export function WorkflowBuilder({
   const [testOpen, setTestOpen] = useState(false);
   const [runInput, setRunInput] = useState('{}');
   const [runOpen, setRunOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [testDelivery, setTestDelivery] = useState<TestDelivery | null>(null);
 
   const triggerSelected = selected === 'trigger';
   const selectedStep = definition.steps.find((step) => step.key === selected);
@@ -260,6 +279,30 @@ export function WorkflowBuilder({
       toast.error(
         error instanceof ApiRequestError ? error.message : 'the test run could not be started',
       );
+    }
+  }
+
+  async function sendTestDelivery() {
+    setSending(true);
+    try {
+      const response = await api.post<TestDelivery>(
+        `/api/workflows/${workflow.id}/webhook/test-delivery`,
+        {},
+        { browser: true },
+      );
+      setTestDelivery(response);
+      toast.success(
+        response.accepted
+          ? `The delivery was accepted (execution ${response.executionId?.slice(0, 8)})`
+          : `The endpoint answered with ${response.status}`,
+      );
+      startRefresh();
+    } catch (error) {
+      toast.error(
+        error instanceof ApiRequestError ? error.message : 'the test delivery could not be sent',
+      );
+    } finally {
+      setSending(false);
     }
   }
 
@@ -634,24 +677,58 @@ export function WorkflowBuilder({
                         </Button>
                       </div>
                     </div>
+
+                    <Alert variant="info" title="How to sign a delivery">
+                      The signature is not fetched from FlowForge: the sender computes it from the shared secret. Sign the
+                      exact bytes of the body with HMAC-SHA256 over{' '}
+                      <span className="font-mono">&lt;timestamp&gt;.&lt;body&gt;</span>, where the timestamp is unix
+                      milliseconds, and send the hex digest in the{' '}
+                      <span className="font-mono">X-FlowForge-Signature</span> header as{' '}
+                      <span className="font-mono">t=&lt;ts&gt;,v1=&lt;hmac&gt;</span>. The timestamp tolerance is five
+                      minutes.
+                    </Alert>
+
+                    <CodeBlock
+                      value={`SECRET="whsec_..."
+BODY='{"name":"Ada","email":"ada@example.com"}'
+TS=$(date +%s000)
+SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')
+
+curl -X POST "${workflow.webhookEndpoint.url}" \\
+  -H "content-type: application/json" \\
+  -H "idempotency-key: $(uuidgen)" \\
+  -H "x-flowforge-signature: t=$TS,v1=$SIG" \\
+  -d "$BODY"`}
+                    />
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={sendTestDelivery} disabled={sending}>
+                        {sending ? <Loader2 className="animate-spin" /> : <Send />}
+                        Send a signed test delivery
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={rotateSecret}>
+                        <KeyRound />
+                        Rotate the signing secret
+                      </Button>
+                    </div>
+
                     <p className="text-xs text-[var(--color-muted-foreground)]">
-                      Sign the request with HMAC-SHA256 over `&lt;timestamp&gt;.&lt;body&gt;` and send it as
-                      `X-FlowForge-Signature: t=&lt;ts&gt;,v1=&lt;hmac&gt;`. The timestamp tolerance is five minutes.
+                      The test delivery is a real delivery: the workflow runs its actions for real. Rotate the secret if
+                      you no longer have it — the previous secret keeps working for an hour, so a rotation never breaks a
+                      sender that has not been updated yet.
                     </p>
+
                     {workflow.webhookEndpoint.previousSecretValidUntil ? (
                       <Alert variant="info">
                         The previous secret is still accepted until{' '}
                         {formatDateTime(workflow.webhookEndpoint.previousSecretValidUntil)}.
                       </Alert>
                     ) : null}
-                    <Button variant="outline" size="sm" onClick={rotateSecret}>
-                      <KeyRound />
-                      Rotate the signing secret
-                    </Button>
                   </>
                 ) : (
                   <p className="text-sm text-[var(--color-muted-foreground)]">
-                    This workflow has no webhook endpoint. Publish a webhook trigger to create one.
+                    This workflow has no webhook endpoint. Publish a webhook trigger to create one. The signing secret is
+                    shown once, in the publish dialog.
                   </p>
                 )}
               </TabsContent>
@@ -686,6 +763,46 @@ export function WorkflowBuilder({
           </div>
           <DialogFooter>
             <Button onClick={() => setSecret(null)}>I have stored this secret</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={testDelivery !== null} onOpenChange={(open) => !open && setTestDelivery(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>The signed delivery</DialogTitle>
+            <DialogDescription>
+              This is the request that was sent. The signature is the hex HMAC-SHA256 of{' '}
+              <span className="font-mono">&lt;timestamp&gt;.&lt;body&gt;</span>, keyed with the endpoint secret.
+            </DialogDescription>
+          </DialogHeader>
+          {testDelivery ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-[var(--color-muted-foreground)]">Status</span>
+                <span className="font-mono">{testDelivery.status}</span>
+                {testDelivery.executionId ? (
+                  <Link
+                    href={`/executions/${testDelivery.executionId}`}
+                    className="ml-auto text-[var(--color-primary)] hover:underline"
+                  >
+                    Open the execution
+                  </Link>
+                ) : null}
+              </div>
+              <CodeBlock
+                value={`${testDelivery.request.method} ${testDelivery.request.url}
+
+${Object.entries(testDelivery.request.headers)
+  .map(([key, value]) => `${key}: ${value}`)
+  .join('\n')}
+
+${testDelivery.request.body}`}
+              />
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button onClick={() => setTestDelivery(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

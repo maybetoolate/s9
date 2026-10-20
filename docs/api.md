@@ -51,6 +51,7 @@ workspace of the caller; hiding a control in the UI is not authorization.
 | `PUT` | `/api/workflows/:id/draft` | `{ definition, revision }` — optimistic concurrency, `409` on a stale revision |
 | `POST` | `/api/workflows/:id/validate` | `{ valid, issues[] }` |
 | `POST` | `/api/workflows/:id/publish` | Creates an immutable version |
+| `POST` | `/api/workflows/:id/webhook/test-delivery` | Signs and sends a delivery to the endpoint, and returns the exact request |
 | `POST` | `/api/workflows/:id/pause` | Stops new runs, in-flight runs finish |
 | `POST` | `/api/workflows/:id/resume` | |
 | `POST` | `/api/workflows/:id/archive` | Keeps the history and the versions |
@@ -147,6 +148,18 @@ curl -X POST "http://localhost:4100/webhooks/<slug>" \
 
 The timestamp tolerance is five minutes. A rotated secret keeps working for a short overlap window, so a rotation does
 not break senders that have not been updated yet.
+
+### Getting the secret
+
+The secret is shown exactly once, in the publish dialog, when the endpoint is
+created. If you no longer have it:
+
+- open the workflow, go to the **Webhook** tab and **rotate the signing secret** — the new secret is shown once;
+- the previous secret keeps working for an hour, so a rotation does not break a sender that has not been updated.
+
+The **Send a signed test delivery** button in the same tab signs a sample payload with the endpoint secret, delivers it
+to the intake and shows the exact request it sent. It is the quickest way to see the signature format and to confirm
+that the endpoint accepts a delivery. The delivery is real: the workflow runs its actions for real.
 
 **Status codes**
 

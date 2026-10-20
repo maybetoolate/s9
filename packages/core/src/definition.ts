@@ -210,7 +210,11 @@ export function validateDefinition(definition: unknown): ValidationIssue[] {
   if (def.trigger.type === 'webhook' && def.trigger.requireSignature) {
     issues.push({
       code: 'webhook_signature_required',
-      message: 'The webhook trigger requires HMAC signatures. The endpoint secret is shown once when it is created.',
+      message:
+        'The webhook trigger requires HMAC signatures. The sender computes the signature from the endpoint secret: ' +
+        'sign the exact body with HMAC-SHA256 over "<timestamp>.<body>" and send it as ' +
+        'X-FlowForge-Signature: t=<unix-ms>,v1=<hex>. The secret is shown once when the endpoint is created; ' +
+        'if you no longer have it, rotate it in the Webhook tab of this workflow.',
       severity: 'info',
     });
   }

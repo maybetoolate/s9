@@ -147,6 +147,8 @@ export interface TestServer {
   requests: { path: string; headers: Record<string, string | undefined>; body: string }[];
   /** Makes the next N requests fail with the given status. */
   failNext: (times: number, status?: number) => void;
+  /** Clears the queued failures and hangs, so a test starts from a clean slate. */
+  reset: () => void;
   /** Makes the server never answer (used to simulate a timeout). */
   hangNext: (times: number) => void;
   close: () => Promise<void>;
@@ -191,6 +193,11 @@ export async function startTestServer(): Promise<TestServer> {
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    reset: () => {
+      failures = 0;
+      hangs = 0;
+      requests.length = 0;
+    },
     failNext: (times, status = 500) => {
       failures = times;
       failureStatus = status;
