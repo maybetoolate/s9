@@ -107,6 +107,23 @@ curl -s http://localhost:4100/api/ops/queue   # needs a session
 The queue counters show the waiting, active, delayed and failed jobs, the outbox counters and the worker heartbeats. A
 worker that has not sent a heartbeat for more than a minute is dead.
 
+### The web app cannot reach the API
+
+The web app proxies every `/api/*` request to the API. If the proxy cannot connect, the API address is wrong for the
+environment it runs in:
+
+```bash
+docker compose exec web printenv API_INTERNAL_URL API_PUBLIC_URL
+```
+
+Inside the compose network the internal address is `http://api:4000`; on the host it is `http://localhost:4100`. The
+address is read at runtime, so changing it only needs a restart of the web container, not a rebuild.
+
+### The session does not persist in the browser
+
+The session cookie is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL. A browser silently drops a
+`Secure` cookie on a plain HTTP origin, so a local deployment over HTTP has to keep `WEB_PUBLIC_URL` on `http://`.
+
 ### The demo workflow fails on the notification step
 
 The demo workflow stores `DEMO_NOTIFICATION_URL` in its definition, so the value has to be reachable **from the

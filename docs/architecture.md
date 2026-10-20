@@ -49,6 +49,23 @@ Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boun
 | Scheduler | Find due schedule occurrences, create deduplicated executions | Use only process memory to remember future runs |
 | Action adapters | HTTP, email, database, notification | Assume every request is safe to repeat |
 
+## How the web app reaches the API
+
+The browser only ever talks to the web app. The web app forwards the call to the API through a route handler
+(`src/app/api/[...path]`), and the server components call the API directly over the internal address.
+
+The address of the API is resolved **when the request arrives**, not at build time. A Next.js rewrite would bake the
+destination into the routes manifest, which would tie the image to one environment; the proxy keeps a single image
+usable everywhere:
+
+| Environment | `API_INTERNAL_URL` | `API_PUBLIC_URL` |
+| --- | --- | --- |
+| Host development | — | `http://localhost:4100` |
+| Docker Compose | `http://api:4000` | `http://localhost:4100` |
+
+The proxy forwards the method, the headers and the body, and copies the response back verbatim — including the session
+cookie, whose attributes must survive the hop unchanged.
+
 ## The execution lifecycle
 
 1. A trigger adapter authenticates and validates the event.

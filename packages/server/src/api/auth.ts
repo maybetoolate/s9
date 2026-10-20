@@ -34,7 +34,12 @@ export const auth = betterAuth({
     defaultCookieAttributes: {
       httpOnly: true,
       sameSite: 'lax',
-      secure: env().NODE_ENV === 'production',
+      // The cookie is only marked `Secure` when the deployment is actually
+      // served over HTTPS. Deriving it from NODE_ENV would break a plain HTTP
+      // deployment (a browser silently drops a `Secure` cookie), and deriving
+      // it from the public URL keeps a container behind a TLS terminator
+      // correct.
+      secure: env().WEB_PUBLIC_URL.startsWith('https://'),
     },
   },
   logger: {

@@ -1,9 +1,14 @@
+import { API_INTERNAL_URL, API_PUBLIC_URL } from '@/lib/api-url';
+
 /**
  * The browser-safe API client.
  *
  * This module must stay free of server-only imports (such as `next/headers`)
  * so client components can use it. The server variant, which forwards the
  * session cookie, lives in `api-server.ts`.
+ *
+ * The browser talks to the web app, which proxies the call to the API. The
+ * address of the API is therefore never part of the browser bundle.
  */
 
 export class ApiRequestError extends Error {
@@ -18,10 +23,6 @@ export class ApiRequestError extends Error {
   }
 }
 
-function apiBaseUrl(): string {
-  return process.env.API_INTERNAL_URL ?? process.env.API_PUBLIC_URL ?? 'http://localhost:4100';
-}
-
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown;
   /** Kept for symmetry with the server client. */
@@ -34,7 +35,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   const requestHeaders = new Headers(headers);
   if (body !== undefined) requestHeaders.set('content-type', 'application/json');
 
-  const response = await fetch(`${apiBaseUrl()}${path}`, {
+  const response = await fetch(path, {
     ...rest,
     headers: requestHeaders,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -80,3 +81,5 @@ export const api = {
 export function segment(value: string): string {
   return encodeURIComponent(value);
 }
+
+export { API_INTERNAL_URL, API_PUBLIC_URL };
