@@ -1,0 +1,57 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-background: oklch(0.17 0.015 265);
+  --color-foreground: oklch(0.94 0.01 260);
+  --color-card: oklch(0.21 0.018 265);
+  --color-card-foreground: oklch(0.94 0.01 260);
+  --color-popover: oklch(0.21 0.018 265);
+  --color-popover-foreground: oklch(0.94 0.01 260);
+  --color-primary: oklch(0.68 0.16 255);
+  --color-primary-foreground: oklch(0.17 0.015 265);
+  --color-secondary: oklch(0.27 0.02 265);
+  --color-secondary-foreground: oklch(0.94 0.01 260);
+  --color-muted: oklch(0.26 0.02 265);
+  --color-muted-foreground: oklch(0.68 0.02 260);
+  --color-accent: oklch(0.29 0.025 265);
+  --color-accent-foreground: oklch(0.96 0.01 260);
+  --color-destructive: oklch(0.62 0.2 25);
+  --color-destructive-foreground: oklch(0.98 0.01 260);
+  --color-success: oklch(0.68 0.15 155);
+  --color-success-foreground: oklch(0.17 0.015 265);
+  --color-warning: oklch(0.79 0.15 80);
+  --color-warning-foreground: oklch(0.17 0.015 265);
+  --color-border: oklch(0.3 0.02 265);
+  --color-input: oklch(0.33 0.02 265);
+  --color-ring: oklch(0.68 0.16 255);
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code,
+  pre {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  }
+}
+
+@layer components {
+  .ff-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .ff-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 9999px;
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@flowforge/core": ["packages/core/src/index.ts"]
+    },
+    "noEmit": true
+  },
+  "include": ["packages/core/src/**/*.ts", "packages/server/src/**/*.ts", "packages/web/**/*.ts", "packages/web/**/*.tsx"]
+}

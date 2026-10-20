@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+
+# pnpm 11 asks for an explicit decision before a dependency may run its
+# install scripts. Only the build tooling needs one.
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  msgpackr-extract: true

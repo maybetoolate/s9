@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: flowforge
+          POSTGRES_PASSWORD: flowforge
+          POSTGRES_DB: flowforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowforge -d flowforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
+      DATABASE_URL_TEST: postgres://flowforge:flowforge@localhost:5432/flowforge_test
+      DATABASE_ADMIN_URL: postgres://flowforge:flowforge@localhost:5432/postgres
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-session-secret-at-least-32-characters-long
+      ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      ENCRYPTION_KEY_ID: key-1
+      EMAIL_PROVIDER: mailpit
+      MAILPIT_URL: http://localhost:8025
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Apply migrations to an empty database
+        run: pnpm --filter @flowforge/server db:migrate
+        env:
+          DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
+
+      - name: Unit tests
+        run: pnpm --filter @flowforge/server test:unit
+
+      - name: Integration tests
+        run: pnpm --filter @flowforge/server test:integration
+
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'

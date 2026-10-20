@@ -1,0 +1,34 @@
+{
+  "name": "flowforge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FlowForge - a small, self-hostable workflow engine with execution transparency and safe recovery.",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "pnpm --filter @flowforge/core build && pnpm --filter @flowforge/server build && pnpm --filter @flowforge/web build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm --filter @flowforge/server test",
+    "test:unit": "pnpm --filter @flowforge/server test:unit",
+    "test:integration": "pnpm --filter @flowforge/server test:integration",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "pnpm --filter @flowforge/server dev:api",
+    "dev:worker": "pnpm --filter @flowforge/server dev:worker",
+    "dev:scheduler": "pnpm --filter @flowforge/server dev:scheduler",
+    "dev:web": "pnpm --filter @flowforge/web dev",
+    "db:migrate": "pnpm --filter @flowforge/server db:migrate",
+    "db:seed": "pnpm --filter @flowforge/server db:seed",
+    "db:reset": "pnpm --filter @flowforge/server db:reset",
+    "mail": "docker compose up -d mailhog",
+    "up": "docker compose up -d postgres redis mailhog",
+    "down": "docker compose down"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

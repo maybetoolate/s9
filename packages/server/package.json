@@ -1,0 +1,43 @@
+{
+  "name": "@flowforge/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main-api.js",
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "dev:api": "tsx watch --tsconfig ../../tsconfig.json src/main-api.ts",
+    "dev:worker": "tsx watch --tsconfig ../../tsconfig.json src/main-worker.ts",
+    "dev:scheduler": "tsx watch --tsconfig ../../tsconfig.json src/main-scheduler.ts",
+    "start:api": "node dist/main-api.js",
+    "start:worker": "node dist/main-worker.js",
+    "start:scheduler": "node dist/main-scheduler.js",
+    "db:migrate": "tsx --tsconfig ../../tsconfig.json src/db/migrate.ts",
+    "db:seed": "tsx --tsconfig ../../tsconfig.json src/db/seed.ts",
+    "db:reset": "tsx --tsconfig ../../tsconfig.json src/db/reset.ts",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration"
+  },
+  "dependencies": {
+    "@flowforge/core": "workspace:*",
+    "better-auth": "^1.7.11",
+    "bullmq": "^5.62.0",
+    "fastify": "^5.6.2",
+    "ioredis": "^5.8.1",
+    "pg": "^8.16.3",
+    "pino": "^9.13.1",
+    "zod": "^4.6.7",
+    "undici": "^7.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.15.6",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.4"
+  }
+}
