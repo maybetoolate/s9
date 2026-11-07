@@ -16,6 +16,7 @@
     "test:integration": "pnpm --filter @flowforge/server test:integration",
     "dev": "node scripts/dev.mjs",
     "dev:api": "pnpm --filter @flowforge/server dev:api",
+    "dev:auth": "pnpm --filter @flowforge/server dev:auth",
     "dev:worker": "pnpm --filter @flowforge/server dev:worker",
     "dev:scheduler": "pnpm --filter @flowforge/server dev:scheduler",
     "dev:web": "pnpm --filter @flowforge/web dev",
@@ -24,10 +25,17 @@
     "db:reset": "pnpm --filter @flowforge/server db:reset",
     "mail": "docker compose up -d mailhog",
     "up": "docker compose up -d postgres redis mailhog",
-    "down": "docker compose down"
+    "down": "docker compose down",
+    "logs": "docker compose logs -f --no-log-prefix auth api worker scheduler | pino-pretty",
+    "logs:auth": "docker compose logs -f --no-log-prefix auth | pino-pretty",
+    "logs:api": "docker compose logs -f --no-log-prefix api | pino-pretty",
+    "logs:worker": "docker compose logs -f --no-log-prefix worker | pino-pretty",
+    "logs:scheduler": "docker compose logs -f --no-log-prefix scheduler | pino-pretty",
+    "logs:web": "docker compose logs -f --no-log-prefix web | pino-pretty"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "pino-pretty": "^13.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

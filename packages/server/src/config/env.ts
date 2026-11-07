@@ -30,6 +30,37 @@ const EnvSchema = z.object({
    */
   API_SELF_URL: z.string().optional(),
 
+  // ------------------------------------------------------------------ auth
+  /** Address the auth service listens on. */
+  AUTH_PORT: z.coerce.number().int().min(1).max(65_535).default(4001),
+  AUTH_HOST: z.string().default('0.0.0.0'),
+  /**
+   * Internal address of the auth service. The API uses it to validate a
+   * session and to read a user profile; it is never exposed to a browser.
+   */
+  AUTH_INTERNAL_URL: z.string().default('http://localhost:4001'),
+  /** OAuth2 client credentials the API uses to call the auth service. */
+  AUTH_CLIENT_ID: z.string().min(1).default('flowforge-api'),
+  AUTH_CLIENT_SECRET: z
+    .string()
+    .min(16, 'AUTH_CLIENT_SECRET must be at least 16 characters')
+    .default('flowforge-api-local-service-secret'),
+  /** Scopes the auth service may grant to the API client. */
+  AUTH_CLIENT_SCOPES: z.string().default('users:read sessions:validate'),
+  /** Lifetime of an issued service token, in seconds. */
+  AUTH_SERVICE_TOKEN_TTL: z.coerce.number().int().min(30).max(3_600).default(300),
+  /**
+   * OAuth resource identifier the API requests service tokens for. The token
+   * audience is this value, which keeps service tokens separate from tokens
+   * issued for any other resource.
+   */
+  AUTH_API_RESOURCE: z.string().min(1).default('urn:flowforge:api'),
+  /**
+   * OAuth issuer of the auth service. Defaults to the public auth base URL,
+   * which is what Better-Auth stamps into every access token.
+   */
+  AUTH_ISSUER: z.string().default(''),
+
   /** Better-Auth secret used to sign sessions. */
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 characters'),
   /** Base64 encoded 32 byte master key for envelope encryption. */
@@ -73,6 +104,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`).join('\n');
     throw new Error(`Invalid environment configuration:\n${issues}`);
+  }
+  if (!parsed.data.AUTH_ISSUER) {
+    parsed.data.AUTH_ISSUER = new URL('/api/auth', parsed.data.WEB_PUBLIC_URL)
+      .toString()
+      .replace(/\/$/, '');
   }
   return parsed.data;
 }

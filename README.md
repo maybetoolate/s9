@@ -52,12 +52,12 @@ pnpm install
 pnpm db:migrate
 pnpm db:seed
 
-# 4. Run the API, the worker, the scheduler and the web app
+# 4. Run the auth service, the API, the worker, the scheduler and the web app
 pnpm dev
 ```
 
-The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, and the mail catcher on
-<http://localhost:8025>.
+The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, the auth service on
+<http://localhost:4001> (internal only), and the mail catcher on <http://localhost:8025>.
 
 Sign in with the seeded operator:
 
@@ -76,11 +76,30 @@ docker compose up --build -d
 docker compose exec api node packages/server/dist/cli-seed.js
 ```
 
-This starts `web`, `api`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit` and `sink`. The API applies its migrations
-on start.
+This starts `web`, `api`, `auth`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit` and `sink`. The API and the auth
+service apply migrations on start (serialised by an advisory lock), so they can start in any order.
+
+The auth service owns the Better-Auth tables. It is reachable only on the Compose network; its port is not published to
+the host. The API talks to it with an OAuth2 client-credentials access token issued by Better-Auth's OAuth provider
+(`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`) and caches the short-lived token until it expires. The service client is
+created on start from those environment variables, so rotating the secret is a matter of changing it and restarting.
 
 The seed has to run in the same environment as the worker: it stores the demo notification destination in the workflow
 definition, and the worker has to be able to reach it. The seed warns when the destination is not reachable.
+
+### Logs
+
+The services write structured JSON logs. Instead of reading the raw stream, use one of these:
+
+- **Web log viewer** — <http://localhost:8080> (Dozzle). Start it with `docker compose up -d dozzle`; it lists every
+  container in the project, follows logs live, and lets you search, filter by level and switch containers.
+- **Pretty CLI logs** — `pnpm logs` follows `auth`, `api`, `worker` and `scheduler` through `pino-pretty`. Use
+  `pnpm logs:auth`, `pnpm logs:api`, `pnpm logs:worker`, `pnpm logs:scheduler` or `pnpm logs:web` for a single service.
+
+```bash
+docker compose up -d dozzle   # then open http://localhost:8080
+pnpm logs:api                 # human-readable, colourised API log
+```
 
 ### One-command database reset
 

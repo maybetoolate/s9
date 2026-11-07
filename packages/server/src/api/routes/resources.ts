@@ -27,6 +27,7 @@ import {
   listExecutions,
 } from '../../db/repo.js';
 import { getPool, withTransaction } from '../../db/pool.js';
+import { getUserProfile } from '../../auth/client.js';
 import { requireContext } from '../context.js';
 import { ApiError, paginated, parsePagination } from '../http.js';
 import { toAuditEventDto, toCredentialDto, toExecutionSummary, toScheduleDto } from '../mappers.js';
@@ -51,8 +52,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
   // -------------------------------------------------------------- me
   app.get('/api/me', async (request, reply) => {
     const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+    // The profile lives in the auth service; the API never reads its tables.
+    const profile = await getUserProfile(ctx.userId);
+    if (!profile) throw ApiError.unauthorized('the account no longer exists');
     return {
-      user: { id: ctx.userId, email: ctx.email, name: ctx.name },
+      user: { id: ctx.userId, email: profile.email, name: profile.name },
       workspace: { id: ctx.workspaceId, name: ctx.workspaceName },
       role: ctx.role,
     };

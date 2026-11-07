@@ -5,7 +5,6 @@ import {
   validateDefinition,
   type WorkflowDefinition,
 } from '@flowforge/core';
-import { auth } from '../api/auth.js';
 import { addMembership, createWorkflow, getDraft, insertWebhookEndpoint, listWorkspacesForUser } from './repo.js';
 import { closePool, getPool, withTransaction } from './pool.js';
 import { runMigrations } from './migrate.js';
@@ -82,6 +81,10 @@ const DEMO_DEFINITION: WorkflowDefinition = {
 async function seed(): Promise<void> {
   const config = env();
   await runMigrations({ log: false });
+
+  // Imported after migrations: Better-Auth validates its schema when the
+  // instance is created, so the auth tables must already exist.
+  const { auth } = await import('../api/auth.js');
 
   const db = getPool();
 

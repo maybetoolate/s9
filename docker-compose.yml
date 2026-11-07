@@ -41,6 +41,23 @@ services:
       timeout: 5s
       retries: 10
 
+  # Real-time web log viewer for every container in this project.
+  # Open http://localhost:8080 to search, filter by container and follow logs.
+  # The Docker socket is mounted read-only: Dozzle can only read logs.
+  dozzle:
+    image: amir20/dozzle:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8080:8080"
+    environment:
+      # Only show the containers that belong to this Compose project.
+      DOZZLE_FILTER: label=com.docker.compose.project=flowforge
+      DOZZLE_LEVEL: info
+      DOZZLE_TAILSIZE: "300"
+      DOZZLE_NO_ANALYTICS: "true"
+    restart: unless-stopped
+
   # Local mail catcher for the email action. The messages can be inspected at
   # http://localhost:8025
   mailpit:
@@ -50,6 +67,36 @@ services:
       - "8025:8025"
       # SMTP. The host port is 1026 so it does not clash with a local SMTP server.
       - "1026:1025"
+
+  # Authentication owns the Better-Auth tables and the session protocol. The
+  # API and the web app reach it over the internal network; its port is not
+  # published to the host.
+  auth:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: ["node", "packages/server/dist/main-auth.js"]
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://flowforge:flowforge@postgres:5432/flowforge
+      # The shared environment contract requires these even though the auth
+      # service itself does not use the queue or the encryption key.
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Zm9vLWZsb3ctbG9jYWwtZW5jcnlwdGlvbi1rZXktMDAwMDA=}
+      ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
+      AUTH_PORT: "4001"
+      AUTH_HOST: 0.0.0.0
+      WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-flowforge-api}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-flowforge-api-local-service-secret}
+      AUTH_CLIENT_SCOPES: users:read sessions:validate
+      AUTH_SERVICE_TOKEN_TTL: "300"
+      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:flowforge:api}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build:
@@ -64,6 +111,11 @@ services:
       API_PORT: "4000"
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:4100}
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
+      AUTH_INTERNAL_URL: http://auth:4001
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-flowforge-api}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-flowforge-api-local-service-secret}
+      AUTH_CLIENT_SCOPES: users:read sessions:validate
+      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:flowforge:api}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Zm9vLWZsb3ctbG9jYWwtZW5jcnlwdGlvbi1rZXktMDAwMDA=}
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
       SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
@@ -78,6 +130,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      auth:
+        condition: service_started
 
   worker:
     build:

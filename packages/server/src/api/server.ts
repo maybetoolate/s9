@@ -1,6 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { auth } from './auth.js';
 import { env } from '../config/env.js';
 import { logger, loggerOptions } from '../lib/logger.js';
 import { ApiError, sendError } from './http.js';
@@ -53,6 +52,14 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (request, body, done) => {
     request.rawBody = body as Buffer;
     done(null, (body as Buffer).toString('utf8'));
+  });
+
+  // The auth proxy forwards the body untouched, and the auth service decides
+  // how to interpret it. Without a catch-all parser Fastify would reject a
+  // form-encoded auth request before the proxy ever sees it.
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (request, body, done) => {
+    request.rawBody = body as Buffer;
+    done(null, body);
   });
 
   // A correlation id is returned for support and log correlation.
@@ -120,17 +127,36 @@ export async function buildServer(): Promise<FastifyInstance> {
       logger.error({ err: error }, 'the queue health check failed');
     }
 
+    // Every authenticated request depends on the auth service, so it belongs
+    // in the readiness decision.
+    try {
+      const response = await fetch(new URL('/health', config.AUTH_INTERNAL_URL), {
+        signal: AbortSignal.timeout(2_000),
+      });
+      checks.auth = response.ok ? 'ok' : 'error';
+      if (!response.ok) healthy = false;
+    } catch (error) {
+      checks.auth = 'error';
+      healthy = false;
+      logger.error({ err: error }, 'the auth health check failed');
+    }
+
     reply.status(healthy ? 200 : 503);
     return { status: healthy ? 'ready' : 'degraded', checks };
   });
 
   // -------------------------------------------------------------- auth
+  // Authentication lives in its own service. The API keeps the public
+  // `/api/auth/*` surface and proxies it so existing clients and the web app
+  // do not need to know the internal address.
   app.all('/api/auth/*', async (request, reply) => {
-    const url = new URL(request.url, config.WEB_PUBLIC_URL);
-    const method = request.method;
+    const target = new URL(request.url, config.AUTH_INTERNAL_URL);
+
     const headers = new Headers();
     for (const [key, value] of Object.entries(request.headers)) {
       if (value === undefined) continue;
+      // Hop-by-hop headers are owned by the outbound request.
+      if (key === 'host' || key === 'connection' || key === 'content-length') continue;
       if (Array.isArray(value)) {
         for (const item of value) headers.append(key, item);
       } else {
@@ -138,27 +164,33 @@ export async function buildServer(): Promise<FastifyInstance> {
       }
     }
 
-    const hasBody = method !== 'GET' && method !== 'HEAD';
-    const body = hasBody ? (request.rawBody ?? Buffer.alloc(0)) : undefined;
+    const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
 
-    const authRequest = new Request(url.toString(), {
-      method,
-      headers,
-      ...(body !== undefined ? { body, duplex: 'half' } : {}),
-    } as RequestInit);
+    let upstream: Response;
+    try {
+      upstream = await fetch(target, {
+        method: request.method,
+        headers,
+        ...(hasBody ? { body: request.rawBody ?? Buffer.alloc(0) } : {}),
+        redirect: 'manual',
+      });
+    } catch (error) {
+      throw new ApiError(
+        502,
+        'auth_unreachable',
+        `the auth service could not be reached: ${(error as Error).message}`,
+      );
+    }
 
-    const response = await auth.handler(authRequest);
-
-    reply.status(response.status);
-    response.headers.forEach((value, key) => {
+    reply.status(upstream.status);
+    upstream.headers.forEach((value, key) => {
       if (key.toLowerCase() === 'set-cookie') return;
       reply.header(key, value);
     });
-    const setCookie = response.headers.getSetCookie?.() ?? [];
-    for (const cookie of setCookie) reply.header('set-cookie', cookie);
+    const setCookie = upstream.headers.getSetCookie?.() ?? [];
+    if (setCookie.length > 0) reply.header('set-cookie', setCookie);
 
-    const payload = Buffer.from(await response.arrayBuffer());
-    return reply.send(payload);
+    return reply.send(Buffer.from(await upstream.arrayBuffer()));
   });
 
   // ----------------------------------------------------------- routes

@@ -1,6 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { fromNodeHeaders } from 'better-auth/node';
-import { auth } from './auth.js';
+import { validateSession, type SessionInfo } from '../auth/client.js';
 import { findMembership, listWorkspacesForUser } from '../db/repo.js';
 import { getPool } from '../db/pool.js';
 import { ApiError } from './http.js';
@@ -17,8 +16,6 @@ export type Role = 'owner' | 'editor' | 'viewer';
 
 export interface RequestContext {
   userId: string;
-  email: string;
-  name: string;
   workspaceId: string;
   workspaceName: string;
   role: Role;
@@ -42,9 +39,8 @@ export function can(role: Role, capability: string): boolean {
   return ROLE_CAPABILITIES[role].includes(capability);
 }
 
-export async function getSession(request: FastifyRequest) {
-  const session = await auth.api.getSession({ headers: fromNodeHeaders(request.headers) });
-  return session;
+export async function getSession(request: FastifyRequest): Promise<SessionInfo | null> {
+  return validateSession(request.headers.cookie);
 }
 
 /**
@@ -59,16 +55,16 @@ export async function requireContext(
   options: { capabilities?: string[] } = {},
 ): Promise<RequestContext> {
   const session = await getSession(request);
-  if (!session?.user) throw ApiError.unauthorized();
+  if (!session) throw ApiError.unauthorized();
 
   const db = getPool();
-  const workspaces = await listWorkspacesForUser(db, session.user.id);
+  const workspaces = await listWorkspacesForUser(db, session.userId);
   const first = workspaces[0];
   if (!first) {
     throw ApiError.forbidden('the account is not a member of any workspace');
   }
 
-  const membership = await findMembership(db, first.id, session.user.id);
+  const membership = await findMembership(db, first.id, session.userId);
   const role = (membership?.role ?? 'viewer') as Role;
 
   for (const capability of options.capabilities ?? []) {
@@ -78,9 +74,7 @@ export async function requireContext(
   }
 
   const context: RequestContext = {
-    userId: session.user.id,
-    email: session.user.email,
-    name: session.user.name,
+    userId: session.userId,
     workspaceId: first.id,
     workspaceName: first.name,
     role,

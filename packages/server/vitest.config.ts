@@ -15,6 +15,10 @@ const alias = {
 export default defineConfig({
   resolve: { alias },
   test: {
+    // Integration test files share one database and truncate it between tests,
+    // so files must never overlap. This has to live on the root config: Vitest
+    // does not apply `fileParallelism` from an individual project.
+    fileParallelism: false,
     projects: [
       {
         resolve: { alias },
@@ -33,7 +37,6 @@ export default defineConfig({
           setupFiles: ['tests/setup/env.ts'],
           testTimeout: 60_000,
           hookTimeout: 60_000,
-          fileParallelism: false,
         },
       },
     ],
