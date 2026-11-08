@@ -9,8 +9,8 @@ import { logger } from '../lib/logger.js';
  * imported by the API without its command line behaviour travelling with it.
  */
 runMigrations()
-  .then(async (result) => {
-    logger.info({ applied: result.applied, skipped: result.skipped.length }, 'migrations complete');
+  .then(async () => {
+    logger.info('migrations complete');
     await closePool();
     process.exit(0);
   })

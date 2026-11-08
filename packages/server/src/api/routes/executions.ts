@@ -8,7 +8,7 @@ import {
   getExecution,
   getStepExecution,
 } from '../../db/repo.js';
-import { getPool } from '../../db/pool.js';
+import { getDb } from '../../db/client.js';
 import { requireContext } from '../context.js';
 import { ApiError, jsonRoute, paginated, parseDate, parsePagination, readJson } from '../http.js';
 import { toAuditEventDto, toExecutionSummary, toStepExecutionDto } from '../mappers.js';
@@ -49,7 +49,7 @@ export async function registerExecutionRoutes(app: App): Promise<void> {
     const query = c.req.query();
     const pagination = parsePagination(query);
 
-    const { rows, total } = await listExecutions(getPool(), ctx.workspaceId, {
+    const { rows, total } = await listExecutions(getDb(), ctx.workspaceId, {
       workflowId: typeof query.workflowId === 'string' ? query.workflowId : undefined,
       status: (query.status as never) ?? 'all',
       triggerType: (query.triggerType as never) ?? 'all',
@@ -68,7 +68,7 @@ export async function registerExecutionRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const execution = await getExecution(db, ctx.workspaceId, id);
     if (!execution) throw ApiError.notFound('execution not found');
 

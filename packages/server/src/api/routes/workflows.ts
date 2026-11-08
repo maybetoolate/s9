@@ -14,6 +14,8 @@ import {
 import { z } from 'zod';
 import {
   createWorkflow,
+  createWorkflowVersion,
+  disableSchedulesForWorkflow,
   getDraft,
   getLatestVersion,
   getScheduleByWorkflow,
@@ -24,13 +26,16 @@ import {
   listVersions,
   listWorkflows,
   rotateWebhookSecret,
+  setScheduleNextRun,
+  setWorkflowPublished,
   setWorkflowStatus,
   updateDraft,
+  updateWorkflowDetails,
   getWorkflow,
   countRunningExecutions,
   upsertSchedule,
 } from '../../db/repo.js';
-import { getPool, withTransaction } from '../../db/pool.js';
+import { getDb, withTransaction } from '../../db/client.js';
 import { requireContext } from '../context.js';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { ApiError, jsonRoute, paginated, parsePagination, readJson } from '../http.js';
@@ -70,7 +75,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const query = c.req.query();
     const pagination = parsePagination(query);
 
-    const { rows, total } = await listWorkflows(getPool(), ctx.workspaceId, {
+    const { rows, total } = await listWorkflows(getDb(), ctx.workspaceId, {
       status: (query.status as never) ?? 'all',
       triggerType: (query.triggerType as never) ?? 'all',
       search: typeof query.search === 'string' ? query.search : undefined,
@@ -115,7 +120,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
 
@@ -154,18 +159,14 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
       .object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2_000).nullable().optional() })
       .parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
 
-    await db.query(
-      `UPDATE workflows
-          SET name = COALESCE($2, name),
-              description = CASE WHEN $3::boolean THEN $4 ELSE description END,
-              updated_at = now()
-        WHERE id = $1`,
-      [id, body.name ?? null, body.description !== undefined, body.description ?? null],
-    );
+    await updateWorkflowDetails(db, id, {
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
+    });
 
     return { ok: true };
   }));
@@ -175,7 +176,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const { id } = c.req.param() as { id: string };
     const body = UpdateDraftBody.parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
     if (workflow.status === 'archived') throw ApiError.conflict('an archived workflow cannot be edited');
@@ -199,7 +200,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const draft = await getDraft(db, id);
     if (!draft) throw ApiError.notFound('workflow not found');
 
@@ -211,7 +212,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['publish'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
 
@@ -228,19 +229,14 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
       const latest = await getLatestVersion(client, id);
       const versionNumber = (latest?.version_number ?? 0) + 1;
 
-      const version = await client.query(
-        `INSERT INTO workflow_versions (workflow_id, version_number, definition, published_by)
-         VALUES ($1, $2, $3::jsonb, $4)
-         RETURNING *`,
-        [id, versionNumber, JSON.stringify(definition), ctx.userId],
-      );
+      const version = await createWorkflowVersion(client, {
+        workflowId: id,
+        versionNumber,
+        definition,
+        publishedBy: ctx.userId,
+      });
 
-      await client.query(
-        `UPDATE workflows
-            SET current_version_id = $2, status = 'published', trigger_type = $3, updated_at = now()
-          WHERE id = $1`,
-        [id, version.rows[0].id, definition.trigger.type],
-      );
+      await setWorkflowPublished(client, id, version.id, definition.trigger.type);
 
       let webhookSecret: string | null = null;
       const endpoint = await getWebhookEndpointByWorkflow(client, id);
@@ -267,7 +263,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
           nextRunAt: computeNextRun(definition.trigger.cron, definition.trigger.timezone),
         });
       } else {
-        await client.query('UPDATE schedules SET enabled = false, next_run_at = NULL WHERE workflow_id = $1', [id]);
+        await disableSchedulesForWorkflow(client, id);
       }
 
       await insertAuditEvent(client, {
@@ -280,7 +276,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
         metadata: { versionNumber },
       });
 
-      return { version: version.rows[0], webhookSecret };
+      return { version, webhookSecret };
     });
 
     const endpoint = await getWebhookEndpointByWorkflow(db, id);
@@ -308,7 +304,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
       .object({ payload: z.record(z.string(), z.unknown()).optional() })
       .parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const endpoint = await getWebhookEndpointByWorkflow(db, id);
     if (!endpoint) throw ApiError.notFound('the workflow has no webhook endpoint');
     if (!endpoint.encrypted_secret) {
@@ -400,7 +396,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['publish'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
     if (!workflow.current_version_id) {
@@ -411,10 +407,11 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     // A resumed schedule continues from the next occurrence.
     const schedule = await getScheduleByWorkflow(db, id);
     if (schedule?.enabled) {
-      await db.query('UPDATE schedules SET next_run_at = $2 WHERE id = $1', [
+      await setScheduleNextRun(
+        db,
         schedule.id,
         computeNextRun(schedule.schedule_spec, schedule.timezone),
-      ]);
+      );
     }
     return { status: 'published' };
   }));
@@ -430,7 +427,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['write'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
     const draft = await getDraft(db, id);
@@ -453,17 +450,17 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
   app.get('/api/workflows/:id/versions', jsonRoute(async (c) => {
     await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
-    const versions = await listVersions(getPool(), id);
+    const versions = await listVersions(getDb(), id);
     return { data: versions.map(toVersionDto) };
   }));
 
   app.get('/api/workflow-versions/:id', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
-    const version = await getVersion(getPool(), id);
+    const version = await getVersion(getDb(), id);
     if (!version) throw ApiError.notFound('workflow version not found');
 
-    const workflow = await getWorkflow(getPool(), ctx.workspaceId, version.workflow_id);
+    const workflow = await getWorkflow(getDb(), ctx.workspaceId, version.workflow_id);
     if (!workflow) throw ApiError.notFound('workflow version not found');
 
     return toVersionDto(version);
@@ -472,7 +469,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
   app.get('/api/workflows/:id/webhook', jsonRoute(async (c) => {
     await requireContext(c, { capabilities: ['read'] });
     const { id } = c.req.param() as { id: string };
-    const endpoint = await getWebhookEndpointByWorkflow(getPool(), id);
+    const endpoint = await getWebhookEndpointByWorkflow(getDb(), id);
     if (!endpoint) throw ApiError.notFound('the workflow has no webhook endpoint');
     // The secret is never returned again.
     return toWebhookEndpointDto(endpoint, env().API_PUBLIC_URL);
@@ -482,7 +479,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['rotate_credentials'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const endpoint = await getWebhookEndpointByWorkflow(db, id);
     if (!endpoint) throw ApiError.notFound('the workflow has no webhook endpoint');
 
@@ -525,7 +522,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const { id } = c.req.param() as { id: string };
     const body = RunBody.parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
     if (!workflow.current_version_id) {
@@ -564,7 +561,7 @@ export async function registerWorkflowRoutes(app: App): Promise<void> {
     const { id } = c.req.param() as { id: string };
     const body = RunBody.parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
     if (!workflow) throw ApiError.notFound('workflow not found');
 
@@ -601,7 +598,7 @@ async function changeStatus(
   ctx: { workspaceId: string; userId: string },
   status: 'published' | 'paused' | 'archived',
 ): Promise<void> {
-  const db = getPool();
+  const db = getDb();
   const workflow = await getWorkflow(db, ctx.workspaceId, workflowId);
   if (!workflow) throw ApiError.notFound('workflow not found');
 

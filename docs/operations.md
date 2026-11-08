@@ -7,14 +7,13 @@ docker compose up -d postgres redis mailpit sink   # infrastructure
 pnpm install
 pnpm db:migrate
 pnpm db:seed
-pnpm dev                                            # auth, api, worker, scheduler, web
+pnpm dev                                            # api (auth included), worker, scheduler, web
 ```
 
 | Service | URL |
 | --- | --- |
 | Web app | <http://localhost:3000> |
-| API | <http://localhost:4100> |
-| Auth service | <http://localhost:4001> (internal; not published by Compose) |
+| API (authentication included) | <http://localhost:4100> |
 | Mail catcher | <http://localhost:8025> |
 | Demo sink | <http://localhost:8081> |
 | PostgreSQL | `localhost:55432` |
@@ -24,13 +23,12 @@ Sign in with `operator@s9.local` / `s9-demo-password`.
 
 ### Runtime
 
-The API and auth service are Hono applications and, like the worker and scheduler, run on both Bun and Node.js. Bun is the default. To run the compiled
-output on Node.js, build the server and use the `:node` scripts:
+The API is a Hono application and, like the worker and scheduler, runs on both Bun and Node.js. Bun is the default.
+To run the compiled output on Node.js, build the server and use the `:node` scripts:
 
 ```bash
 pnpm --filter @s9/server build
 pnpm --filter @s9/server start:api:node
-pnpm --filter @s9/server start:auth:node
 pnpm --filter @s9/server start:worker:node
 pnpm --filter @s9/server start:scheduler:node
 ```
@@ -43,11 +41,12 @@ pnpm --filter @s9/server start:scheduler:node
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm dev` | Start the auth service, the API, the worker, the scheduler and the web app |
+| `pnpm dev` | Start the API (with embedded auth), the worker, the scheduler and the web app |
+| `pnpm db:generate` | Generate a new SQL migration from `src/db/schema.ts` |
 | `pnpm db:migrate` | Apply the pending migrations |
 | `pnpm db:seed` | Create the demo workspace, the operator and the demo workflow |
 | `docker compose exec api bun packages/server/dist/cli-seed.js` | The same, inside the container network |
-| `pnpm db:reset` | Drop and recreate the public schema |
+| `pnpm db:reset` | Drop and recreate the `public` and `drizzle` schemas |
 | `pnpm test` | The unit and integration suites |
 | `pnpm typecheck` | Typecheck every package |
 | `./scripts/start-local.sh` | Start only the backend processes (useful for a manual verification run) |
@@ -64,13 +63,6 @@ pnpm --filter @s9/server start:scheduler:node
 | `API_INTERNAL_URL` | — | The web app's server-to-server address for the API (Compose: `http://api:4000`) |
 | `API_SELF_URL` | loopback on `API_PORT` | Address the API uses to deliver to its own webhook intake |
 | `WEB_PUBLIC_URL` | `http://localhost:3000` | The origin of the web app (the auth cookie origin) |
-| `AUTH_PORT` | `4001` | The port the auth service listens on |
-| `AUTH_INTERNAL_URL` | `http://localhost:4001` | The API's address for the auth service (Compose: `http://auth:4001`) |
-| `AUTH_CLIENT_ID` | `s9-api` | OAuth2 client id the API uses for service calls |
-| `AUTH_CLIENT_SECRET` | dev default | OAuth2 client secret; set a real value in production |
-| `AUTH_CLIENT_SCOPES` | `users:read sessions:validate` | Scopes granted to the API |
-| `AUTH_SERVICE_TOKEN_TTL` | `300` | Lifetime of a service access token, in seconds |
-| `AUTH_API_RESOURCE` | `urn:s9:api` | Audience of the service access token |
 | `SESSION_SECRET` | — | The Better-Auth session signing secret, at least 16 characters (required) |
 | `ENCRYPTION_KEY` | — | Base64 encoded 32 byte master key (required) |
 | `ENCRYPTION_KEY_ID` | `key-1` | The key id stored beside each ciphertext |
@@ -87,7 +79,6 @@ Generate the secrets:
 ```bash
 openssl rand -base64 32   # ENCRYPTION_KEY
 openssl rand -hex 32      # SESSION_SECRET
-openssl rand -hex 32      # AUTH_CLIENT_SECRET (production)
 ```
 
 ## Troubleshooting
@@ -151,18 +142,18 @@ address is read at runtime, so changing it only needs a restart of the web conta
 The session cookie is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL. A browser silently drops a
 `Secure` cookie on a plain HTTP origin, so a local deployment over HTTP has to keep `WEB_PUBLIC_URL` on `http://`.
 
-### The API returns `503 auth_unavailable`
+### The API refuses to start on an existing database
 
-The API could not reach the auth service, or the service credentials were rejected. Check the internal address and the
-client credentials:
+The Drizzle baseline is a complete schema, not an incremental migration, so a database created by the previous
+migration runner cannot be adopted in place. The runner detects it (`public.workspaces` or `public.schema_migrations`
+without Drizzle history) and stops with an actionable message instead of a confusing "relation already exists" error.
+Recreate the development database once:
 
 ```bash
-docker compose exec api printenv AUTH_INTERNAL_URL AUTH_CLIENT_ID AUTH_CLIENT_SCOPES
-curl -s http://localhost:4100/health/ready   # checks.auth must be "ok"
+pnpm db:reset && pnpm db:migrate && pnpm db:seed
 ```
 
-Inside Compose the auth address is `http://auth:4001`; on the host it is `http://localhost:4001`. The auth service also
-applies the migrations on start, so a fresh database needs it running before the first sign-in.
+This destroys the data in that database. Back it up first if it contains anything you need.
 
 ### The demo workflow fails on the notification step
 
@@ -233,8 +224,10 @@ pnpm db:migrate   # apply the pending migrations
 pnpm db:seed      # demo workspace, operator and workflow
 ```
 
-The migrations are plain SQL files in `packages/server/migrations`, applied in lexical order and recorded in
-`schema_migrations`. Applying them to an empty database is part of the CI contract.
+The schema is declared in `packages/server/src/db/schema.ts`. Drizzle Kit generates the SQL files in
+`packages/server/migrations` from it, and the migration runner applies them under an advisory lock, recording the
+history in `drizzle.__drizzle_migrations`. Applying them to an empty database is part of the CI contract. `pnpm
+db:reset` drops both `public` and `drizzle` so a reset really starts from the baseline.
 
 ### Retention
 
@@ -286,6 +279,5 @@ Implemented here:
 - the audit log is append-only (a database trigger denies `UPDATE` and `DELETE`);
 - secrets are encrypted with a rotatable master key, and the key id is stored beside every ciphertext;
 - SSRF regression tests cover private ranges, redirects and IPv6;
-- the worker heartbeats, the API exposes health and readiness checks (including the auth service), and the queue has
-  diagnostics;
+- the worker heartbeats, the API exposes health and readiness checks, and the queue has diagnostics;
 - the outbox rows are pruned after a fixed 7-day window; execution payload cleanup is not implemented.

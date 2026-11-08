@@ -1,31 +1,26 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import type { App } from '../../src/api/context.js';
-import { buildServer, closePool, createSession, inject, resetData } from './helpers.js';
+import { buildServer, createSession, inject, resetData } from './helpers.js';
 
 /**
- * The service boundary.
+ * The auth module.
  *
- * The API validates the session and reads the profile through the auth
- * service; it must never answer these requests from the Better-Auth tables
- * itself. These tests drive the real API and the real auth service (started by
- * the test setup on an ephemeral port).
+ * Authentication is embedded in the API but isolated in `src/auth`. The API
+ * only ever sees an opaque session cookie; it does not read the Better-Auth
+ * tables and there is no internal service-to-service surface anymore.
  */
-describe('auth service boundary', () => {
+describe('auth module', () => {
   let app: App;
 
   beforeAll(async () => {
     app = await buildServer();
   });
 
-  afterAll(async () => {
-    await closePool();
-  });
-
   beforeEach(async () => {
     await resetData();
   });
 
-  it('returns the profile from the auth service on /api/me', async () => {
+  it('returns the profile on /api/me', async () => {
     const context = await createSession(
       app,
       `profile-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
@@ -49,7 +44,7 @@ describe('auth service boundary', () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it('rejects a session cookie that the auth service does not know', async () => {
+  it('rejects a session cookie that the auth module does not know', async () => {
     const response = await inject(app, {
       method: 'GET',
       url: '/api/me',
@@ -59,51 +54,77 @@ describe('auth service boundary', () => {
     expect(response.statusCode).toBe(401);
   });
 
-  it('rejects an internal call without a service token', async () => {
-    const response = await fetch(`${process.env.AUTH_INTERNAL_URL}/internal/sessions/validate`, {
+  it('sets an HttpOnly, opaque session cookie on sign-up', async () => {
+    const response = await inject(app, {
       method: 'POST',
-    });
-
-    expect(response.status).toBe(401);
-  });
-
-  it('rejects an internal call with an invalid service token', async () => {
-    const response = await fetch(`${process.env.AUTH_INTERNAL_URL}/internal/sessions/validate`, {
-      method: 'POST',
-      headers: { authorization: 'Bearer not-a-real-access-token' },
-    });
-
-    expect(response.status).toBe(401);
-  });
-
-  it('rejects a service token that does not grant the required scope', async () => {
-    const credentials = Buffer.from(
-      `${process.env.AUTH_CLIENT_ID}:${process.env.AUTH_CLIENT_SECRET}`,
-    ).toString('base64');
-
-    const tokenResponse = await fetch(`${process.env.AUTH_INTERNAL_URL}/api/auth/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        authorization: `Basic ${credentials}`,
+      url: '/api/auth/sign-up/email',
+      payload: {
+        email: `cookie-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
+        password: 'integration-test-password',
+        name: 'Cookie Test',
       },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        scope: 'users:read',
-        resource: process.env.AUTH_API_RESOURCE ?? 'urn:s9:api',
-      }),
     });
-    expect(tokenResponse.status).toBe(200);
-    const { access_token: token } = (await tokenResponse.json()) as { access_token: string };
 
-    // The token is valid, but it grants `users:read`, not `sessions:validate`.
-    const response = await fetch(`${process.env.AUTH_INTERNAL_URL}/internal/sessions/validate`, {
+    expect(response.statusCode).toBe(200);
+    const setCookie = response.headers['set-cookie'];
+    const cookie = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+    expect(cookie).toContain('s9.session_token=');
+    expect(cookie?.toLowerCase()).toContain('httponly');
+
+    // The session token is opaque, not a self-contained JWT.
+    const value = cookie?.split(';')[0]?.split('=')[1] ?? '';
+    expect(value.length).toBeGreaterThan(0);
+    expect(value.split('.')).not.toHaveLength(3);
+  });
+
+  it('signs in with email and password after sign-up', async () => {
+    const context = await createSession(
+      app,
+      `signin-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
+    );
+
+    const login = await inject(app, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}` },
+      url: '/api/auth/sign-in/email',
+      payload: { email: context.email, password: 'integration-test-password' },
     });
 
-    expect(response.status).toBe(403);
-    const body = (await response.json()) as { error: { code: string } };
-    expect(body.error.code).toBe('insufficient_scope');
+    expect(login.statusCode).toBe(200);
+    expect(login.headers['set-cookie']).toBeTruthy();
+  });
+
+  it('revokes the session on sign-out', async () => {
+    const context = await createSession(
+      app,
+      `signout-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
+    );
+
+    const signOut = await inject(app, {
+      method: 'POST',
+      url: '/api/auth/sign-out',
+      headers: { cookie: context.cookie },
+      payload: {},
+    });
+    expect(signOut.statusCode).toBe(200);
+
+    const me = await inject(app, {
+      method: 'GET',
+      url: '/api/me',
+      headers: { cookie: context.cookie },
+    });
+    expect(me.statusCode).toBe(401);
+  });
+
+  it('does not expose the removed internal service endpoints', async () => {
+    const calls = [
+      { method: 'POST', url: '/internal/service-token' },
+      { method: 'POST', url: '/internal/sessions/validate' },
+      { method: 'GET', url: '/internal/users/some-user' },
+    ] as const;
+
+    for (const call of calls) {
+      const response = await inject(app, call);
+      expect(response.statusCode).toBe(404);
+    }
   });
 });

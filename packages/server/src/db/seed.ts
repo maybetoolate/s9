@@ -5,9 +5,11 @@ import {
   validateDefinition,
   type WorkflowDefinition,
 } from '@s9/core';
+import { and, eq } from 'drizzle-orm';
 import { addMembership, createWorkflow, getDraft, insertWebhookEndpoint, listWorkspacesForUser } from './repo.js';
-import { closePool, getPool, withTransaction } from './pool.js';
+import { getDb, withTransaction } from './client.js';
 import { runMigrations } from './migrate.js';
+import { user, webhookEndpoints, workflows, workspaces } from './schema.js';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { encrypt } from '../lib/secrets.js';
@@ -84,9 +86,9 @@ async function seed(): Promise<void> {
 
   // Imported after migrations: Better-Auth validates its schema when the
   // instance is created, so the auth tables must already exist.
-  const { auth } = await import('../api/auth.js');
+  const { auth } = await import('../auth/index.js');
 
-  const db = getPool();
+  const db = getDb();
 
   // The demo operator.
   let userId: string | undefined;
@@ -103,10 +105,12 @@ async function seed(): Promise<void> {
   } catch (error) {
     const message = (error as Error).message ?? '';
     if (!/already|exists|registered/i.test(message)) throw error;
-    const existing = await db.query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', [
-      config.SEED_USER_EMAIL,
-    ]);
-    userId = existing.rows[0]?.id;
+    const [existing] = await db
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, config.SEED_USER_EMAIL))
+      .limit(1);
+    userId = existing?.id;
     logger.info({ email: config.SEED_USER_EMAIL }, 'the demo user already exists');
   }
 
@@ -114,30 +118,36 @@ async function seed(): Promise<void> {
 
   // The workspace.
   let workspaceId: string;
-  const workspaces = await listWorkspacesForUser(db, userId);
-  const existing = workspaces[0];
+  const existingWorkspaces = await listWorkspacesForUser(db, userId);
+  const existing = existingWorkspaces[0];
   if (existing) {
     workspaceId = existing.id;
   } else {
-    const workspace = await withTransaction(async (client) => {
-      const created = await client.query<{ id: string }>(
-        'INSERT INTO workspaces (name) VALUES ($1) RETURNING id',
-        [config.SEED_WORKSPACE_NAME],
-      );
-      const id = created.rows[0]?.id as string;
-      await addMembership(client, id, userId as string, 'owner');
+    const workspace = await withTransaction(async (tx) => {
+      const [created] = await tx
+        .insert(workspaces)
+        .values({ name: config.SEED_WORKSPACE_NAME })
+        .returning({ id: workspaces.id });
+      const id = created?.id as string;
+      await addMembership(tx, id, userId as string, 'owner');
       return { id };
     });
     workspaceId = workspace.id;
   }
 
   // The demo workflow.
-  const existingWorkflow = await db.query<{ id: string }>(
-    `SELECT id FROM workflows WHERE workspace_id = $1 AND name = $2`,
-    [workspaceId, 'Contact form follow-up'],
-  );
+  const [existingWorkflow] = await db
+    .select({ id: workflows.id })
+    .from(workflows)
+    .where(
+      and(
+        eq(workflows.workspace_id, workspaceId),
+        eq(workflows.name, 'Contact form follow-up'),
+      ),
+    )
+    .limit(1);
 
-  if (existingWorkflow.rows[0]) {
+  if (existingWorkflow) {
     logger.info('the demo workflow already exists');
     await printSummary(workspaceId, userId, null);
     return;
@@ -201,11 +211,13 @@ async function printSummary(
   userId: string,
   webhookSecret: string | null,
 ): Promise<void> {
-  const db = getPool();
-  const endpoint = await db.query<{ slug: string }>(
-    'SELECT slug FROM webhook_endpoints WHERE workflow_id = (SELECT id FROM workflows WHERE workspace_id = $1 LIMIT 1)',
-    [workspaceId],
-  );
+  const db = getDb();
+  const [endpoint] = await db
+    .select({ slug: webhookEndpoints.slug })
+    .from(webhookEndpoints)
+    .innerJoin(workflows, eq(workflows.id, webhookEndpoints.workflow_id))
+    .where(eq(workflows.workspace_id, workspaceId))
+    .limit(1);
 
   const config = env();
   logger.info(
@@ -214,7 +226,7 @@ async function printSummary(
       user: userId,
       email: config.SEED_USER_EMAIL,
       password: config.SEED_USER_PASSWORD,
-      webhookUrl: endpoint.rows[0] ? `${config.API_PUBLIC_URL}/webhooks/${endpoint.rows[0].slug}` : undefined,
+      webhookUrl: endpoint ? `${config.API_PUBLIC_URL}/webhooks/${endpoint.slug}` : undefined,
       // The signing secret is printed once so the demo can be tried immediately.
       ...(webhookSecret ? { webhookSecret } : {}),
     },

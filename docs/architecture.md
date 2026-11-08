@@ -1,7 +1,8 @@
 # Architecture
 
-s9 is a modular monolith API plus separate worker, scheduler and auth processes, with PostgreSQL as the durable
-system of record and Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boundaries stay clear.
+s9 is a modular monolith API plus separate worker and scheduler processes, with PostgreSQL as the durable system of
+record and Redis/BullMQ as the delivery mechanism. Authentication is a module inside the API rather than a separate
+service, so the browser has one origin to talk to. Deployment stays simple; the module boundaries stay clear.
 
 ```
    ┌────────────┐        ┌──────────────────────────────────────────────┐
@@ -12,7 +13,7 @@ system of record and Redis/BullMQ as the delivery mechanism. Deployment stays si
                                                  ▼
                        ┌───────────────────────────────────────────────┐
    external sender ───▶│  Hono API on Bun or Node (packages/server)    │
-   (webhook)           │  auth proxy · CRUD · validation · publish ·   │
+   (webhook)           │  auth module · CRUD · validation · publish ·  │
                        │  intake                                       │
                        └───────┬───────────────────────────┬───────────┘
                                │  transaction              │ read
@@ -38,9 +39,9 @@ system of record and Redis/BullMQ as the delivery mechanism. Deployment stays si
    └───────────────────────────────────────────────────────────────┘
 
    ┌───────────────────────────────────────────────────────────────┐
-   │  Auth service (packages/server/src/auth)                      │
-   │  Better-Auth tables · sessions · OAuth2 service tokens        │
-   │  reached by the API over the internal network                 │
+   │  Auth module (packages/server/src/auth)                       │
+   │  embedded in the API process                                  │
+   │  Better-Auth tables · sessions · password hashing             │
    └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,8 +50,7 @@ system of record and Redis/BullMQ as the delivery mechanism. Deployment stays si
 | Component | Responsibilities | Must not do |
 | --- | --- | --- |
 | Next.js web app | Workflow editor, dashboard, execution views | Execute workflow steps in the browser |
-| Hono API (Bun or Node) | Auth proxy, CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
-| Auth service | Own the Better-Auth tables, sign sessions, issue and verify OAuth2 service tokens | Serve workflow traffic or expose the session tables to other processes |
+| Hono API (Bun or Node) | Session authentication (Better-Auth), CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
 | PostgreSQL | Durable definitions, versions, executions, attempts, audit events | Rely on queue state as the only record |
 | Redis + BullMQ | Deliver execution continuations, delayed retries, worker concurrency | Become the source of truth for business state |
 | Worker | Load the pinned version, execute steps, persist state transitions | Trust arbitrary workflow input or skip state checks |
@@ -98,19 +98,20 @@ it is set, `API_PUBLIC_URL` is the fallback, and `http://localhost:4100` is the 
 is reached on its published port; in Compose the service name `api` resolves inside the network. The public address is
 also what the API uses to build webhook URLs handed back to the user.
 
-Authentication has one extra hop. The auth service (`packages/server/src/auth`) owns the Better-Auth tables and the
-session protocol; the API keeps the public `/api/auth/*` surface and proxies it to `AUTH_INTERNAL_URL`, so the browser,
-the web proxy and existing clients never need the internal address. The public origin stays `WEB_PUBLIC_URL`, which is
-what Better-Auth uses to build URLs and scope the cookie. The `Set-Cookie` therefore travels auth service → API → web
-proxy unchanged and is stored for the web origin. The cookie is `s9.session_token`, `HttpOnly` and `SameSite=Lax`;
-it is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL, so a plain-HTTP local deployment still works.
+Authentication is embedded in the API. The auth module (`packages/server/src/auth`) owns the Better-Auth instance and
+its tables, and mounts the public `/api/auth/*` surface directly. There is no separate auth process, internal URL or
+service token: the module runs in the same process as the workflow routes, shares the application `pg` pool through the
+Drizzle adapter, and is reached by the browser through the same origin as the rest of the API. The public origin stays
+`WEB_PUBLIC_URL`, which is what Better-Auth uses to build URLs and scope the cookie. The `Set-Cookie` therefore travels
+API → web proxy unchanged and is stored for the web origin. The cookie is `s9.session_token`, `HttpOnly` and
+`SameSite=Lax`; it is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL, so a plain-HTTP local deployment
+still works.
 
-On every authenticated request the API validates the user's cookie with the auth service
-(`POST /internal/sessions/validate`) and reads the display profile for `/api/me` from `GET /internal/users/:id`. Those
-internal calls use an OAuth2 client-credentials access token (`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`, scopes
-`users:read sessions:validate`) that the API caches until shortly before it expires. The API never reads the auth
-tables directly, and the auth service is not part of the browser-facing surface. `/health/ready` includes the auth
-service in its checks.
+Every authenticated request is validated in-process against the session table. The module exposes only
+`validateSession` and `getUserProfile` to the rest of the server (`src/auth/index.ts`); the Better-Auth instance and its
+schema stay private, so the workflow code never reads the auth tables directly and the module can be extracted later
+without changing its callers. Signing out deletes the session row, so revocation is immediate rather than a token
+blacklist. `/health/ready` no longer needs an auth-service check: the database check covers the session store.
 
 Public webhook intake has a sibling runtime proxy (`src/app/webhooks/[slug]/route.ts`) that resolves the same address.
 It exists so a delivery can be tried from the browser; external senders post to the API's `API_PUBLIC_URL` directly.
@@ -153,7 +154,7 @@ worker                                   database
   │    AND status IN ('queued','running',  │
   │           'retrying')                  │
   │    AND (lease_expires_at IS NULL       │
-  │         OR lease_expires_at < now()     │
+  │         OR lease_expires_at < now()    │
   │         OR lease_token = $1)           │
   │                                        │
   ├───────────────────────────────────────▶│  ← the claim
@@ -190,7 +191,7 @@ state and stops. It cannot produce an invalid transition.
 | The provider answers 429 or a transient 5xx | Bounded exponential backoff with jitter, honouring `Retry-After`. |
 | The provider answers a permanent 4xx | The run fails promptly with a sanitised, actionable error. |
 | The scheduler restarts | Due occurrences are reconciled from the durable schedule records. |
-| The auth service is unreachable | The API answers `503 auth_unavailable`, and `/health/ready` reports the auth check as failed. |
+| The browser presents an expired or revoked session | The API answers `401 unauthorized`, and the web app returns to the login page. |
 | A workflow is edited after publication | Existing executions stay pinned to their original version. |
 | A retry is requested twice | The retry-request idempotency key produces one recovery. |
 
@@ -204,13 +205,14 @@ state and stops. It cannot produce an invalid transition.
 
 ## Data model
 
-See [state-machines.md](state-machines.md) for the transitions and [the migrations](../packages/server/migrations) for
-the authoritative schema.
+See [state-machines.md](state-machines.md) for the transitions. The authoritative schema is
+[`src/db/schema.ts`](../packages/server/src/db/schema.ts); the SQL in [the migrations](../packages/server/migrations) is
+generated from it by Drizzle Kit.
 
 | Entity | Purpose |
 | --- | --- |
 | `workspaces`, `workspace_memberships` | Ownership boundary for workflows and credentials |
-| `user`, `session`, `account`, `oauth*` tables | Identity, sessions and service credentials, owned exclusively by the auth service |
+| `user`, `session`, `account`, `verification` tables | Identity and sessions, owned exclusively by the auth module inside the API |
 | `workflows`, `workflow_drafts`, `workflow_versions` | Stable identity, an editable draft and immutable snapshots |
 | `credentials` | Provider secrets, encrypted, separate from the definitions |
 | `webhook_endpoints` | The intake URL, the signing secret and the rotation metadata |

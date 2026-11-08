@@ -1,12 +1,15 @@
 import {
   findStaleExecutions,
   findUnstartedExecutions,
+  hasPendingOutboxForAggregate,
+  incrementRunSequence,
   insertAuditEvent,
+  touchQueuedExecution,
   updateExecutionStatus,
   type Db,
   type ExecutionRow,
 } from '../db/repo.js';
-import { databaseNow, getPool, withTransaction } from '../db/pool.js';
+import { databaseNow, getDb, withTransaction } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { scheduleContinuation } from './execution-service.js';
 
@@ -33,7 +36,7 @@ export interface ReconcileResult {
 const REQUEUE_AFTER_MS = 60_000;
 
 export async function reconcileOnce(): Promise<ReconcileResult> {
-  const db = getPool();
+  const db = getDb();
   const now = await databaseNow();
   const result: ReconcileResult = { staleRecovered: 0, requeued: 0 };
 
@@ -99,26 +102,14 @@ async function requeueExecution(db: Db, execution: ExecutionRow) {
   return withTransaction(async (client) => {
     // Only re-enqueue when nothing is waiting to be published: an execution
     // that still has a pending outbox row will be published by the dispatcher.
-    const pending = await client.query(
-      `SELECT 1 FROM outbox_events
-        WHERE aggregate_id = $1 AND status IN ('pending', 'failed') LIMIT 1`,
-      [execution.id],
-    );
-    if (pending.rowCount && pending.rowCount > 0) return false;
+    if (await hasPendingOutboxForAggregate(client, execution.id)) return false;
 
-    const result = await client.query<{ run_sequence: number }>(
-      `UPDATE executions
-          SET run_sequence = run_sequence + 1, updated_at = now()
-        WHERE id = $1 AND status = 'queued'
-        RETURNING run_sequence`,
-      [execution.id],
-    );
-    const row = result.rows[0];
-    if (!row) return false;
+    const runSequence = await touchQueuedExecution(client, execution.id);
+    if (runSequence === null) return false;
 
     await scheduleContinuation(client, {
       executionId: execution.id,
-      runSequence: row.run_sequence,
+      runSequence,
       workspaceId: execution.workspace_id,
       workflowId: execution.workflow_id,
     });
@@ -126,12 +117,4 @@ async function requeueExecution(db: Db, execution: ExecutionRow) {
     logger.info({ executionId: execution.id }, 'an execution was re-enqueued after a queue data loss');
     return true;
   });
-}
-
-async function incrementRunSequence(client: import('pg').PoolClient, executionId: string): Promise<number> {
-  const result = await client.query<{ run_sequence: number }>(
-    'UPDATE executions SET run_sequence = run_sequence + 1 WHERE id = $1 RETURNING run_sequence',
-    [executionId],
-  );
-  return result.rows[0]?.run_sequence ?? 0;
 }

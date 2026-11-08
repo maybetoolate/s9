@@ -1,14 +1,17 @@
 import { Hono } from 'hono';
+import { sql } from 'drizzle-orm';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
-import { ApiError, relayResponse, sendError } from './http.js';
+import { ApiError, sendError } from './http.js';
+import { handleAuthRequest } from '../auth/index.js';
 import { registerWorkflowRoutes } from './routes/workflows.js';
 import { registerExecutionRoutes } from './routes/executions.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 import { registerResourceRoutes } from './routes/resources.js';
-import { getPool, closePool } from '../db/pool.js';
+import { closePool } from '../db/pool.js';
+import { getDb } from '../db/client.js';
 import { RepositoryError } from '../db/repo.js';
 import { getRedis, closeRedis } from '../queue/connection.js';
 import type { App, AppEnv } from './context.js';
@@ -17,15 +20,14 @@ import { serveHttp } from '../lib/serve.js';
 /**
  * The HTTP API.
  *
- * The API owns authentication, CRUD, validation, publishing, webhook intake
- * and run requests. It never performs long running workflow work inline.
+ * The API owns authentication (through the embedded auth module), CRUD,
+ * validation, publishing, webhook intake and run requests. It never performs
+ * long running workflow work inline.
  */
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
 export async function buildServer(): Promise<App> {
-  const config = env();
-
   const app = new Hono<AppEnv>();
 
   // A correlation id is returned for support and log correlation.
@@ -85,7 +87,7 @@ export async function buildServer(): Promise<App> {
     let healthy = true;
 
     try {
-      await getPool().query('SELECT 1');
+      await getDb().execute(sql`SELECT 1`);
       checks.database = 'ok';
     } catch (error) {
       checks.database = 'error';
@@ -102,59 +104,14 @@ export async function buildServer(): Promise<App> {
       logger.error({ err: error }, 'the queue health check failed');
     }
 
-    // Every authenticated request depends on the auth service, so it belongs
-    // in the readiness decision.
-    try {
-      const response = await fetch(new URL('/health', config.AUTH_INTERNAL_URL), {
-        signal: AbortSignal.timeout(2_000),
-      });
-      checks.auth = response.ok ? 'ok' : 'error';
-      if (!response.ok) healthy = false;
-    } catch (error) {
-      checks.auth = 'error';
-      healthy = false;
-      logger.error({ err: error }, 'the auth health check failed');
-    }
-
     return c.json({ status: healthy ? 'ready' : 'degraded', checks }, healthy ? 200 : 503);
   });
 
   // -------------------------------------------------------------- auth
-  // Authentication lives in its own service. The API keeps the public
-  // `/api/auth/*` surface and proxies it so existing clients and the web app
-  // do not need to know the internal address.
-  app.all('/api/auth/*', async (c) => {
-    const url = new URL(c.req.url);
-    const target = new URL(url.pathname + url.search, config.AUTH_INTERNAL_URL);
-
-    const headers = new Headers();
-    for (const [key, value] of c.req.raw.headers) {
-      // Hop-by-hop headers are owned by the outbound request.
-      if (key === 'host' || key === 'connection' || key === 'content-length') continue;
-      headers.append(key, value);
-    }
-
-    const hasBody = c.req.method !== 'GET' && c.req.method !== 'HEAD';
-    const body = hasBody ? await c.req.arrayBuffer() : undefined;
-
-    let upstream: Response;
-    try {
-      upstream = await fetch(target, {
-        method: c.req.method,
-        headers,
-        ...(body !== undefined ? { body } : {}),
-        redirect: 'manual',
-      });
-    } catch (error) {
-      throw new ApiError(
-        502,
-        'auth_unreachable',
-        `the auth service could not be reached: ${(error as Error).message}`,
-      );
-    }
-
-    return relayResponse(upstream);
-  });
+  // Authentication is an embedded module, but it is mounted as a distinct
+  // surface: the web app and clients only ever see `/api/auth/*`, and the
+  // workflow code never reaches into Better-Auth.
+  app.all('/api/auth/*', (c) => handleAuthRequest(c.req.raw));
 
   // ----------------------------------------------------------- routes
   await registerWorkflowRoutes(app);

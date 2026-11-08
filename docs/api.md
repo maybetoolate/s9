@@ -8,9 +8,9 @@ the web app proxies them to the API.
 ## Authentication
 
 Authentication is handled by a maintained authentication library (Better-Auth); s9 does not implement its own
-password or session protocol. It runs in a separate auth service that owns the auth tables. The API keeps the public
-`/api/auth/*` surface and proxies it, so the endpoints below do not change when the deployment moves the auth service
-behind the internal network.
+password or session protocol. The library runs inside the API process and owns the `user`, `session`, `account` and
+`verification` tables. The public surface below is served by the API directly — there is no separate auth service, and
+no service-to-service token.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -19,12 +19,9 @@ behind the internal network.
 | `POST /api/auth/sign-out` | End the session |
 | `GET /api/auth/get-session` | The current session |
 
-The session is a `HttpOnly` cookie named `s9.session_token`. The API validates it with the auth service on every
-request; clients only ever send the cookie. Every request below is authorized against the workspace of the caller;
-hiding a control in the UI is not authorization.
-
-Service-to-service calls between the API and the auth service use the OAuth2 client-credentials grant. Those internal
-endpoints are not part of the public API.
+The session is a `HttpOnly` cookie named `s9.session_token`. The API validates it against the session table on every
+request; clients only ever send the cookie. Signing out deletes the session row, so revocation is immediate. Every
+request below is authorized against the workspace of the caller; hiding a control in the UI is not authorization.
 
 ## Conventions
 

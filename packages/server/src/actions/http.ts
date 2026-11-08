@@ -210,7 +210,10 @@ export class HttpRequestExecutor implements ActionExecutor {
     } catch (error) {
       throw wrapTransportError(error, config);
     } finally {
-      await agent.close().catch(() => undefined);
+      // Bun ships its own `undici` module whose Agent is a thin fetch wrapper
+      // without `close`; Node's undici Agent needs to be closed to release
+      // sockets, so close it when the runtime provides the method.
+      await (agent.close?.() ?? Promise.resolve()).catch(() => undefined);
     }
   }
 

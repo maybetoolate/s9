@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # The runtime image is selectable at build time; Bun is the default.
 ARG RUNTIME_IMAGE=oven/bun:1-alpine
 
@@ -13,7 +14,17 @@ COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 
-RUN pnpm install --frozen-lockfile --filter @s9/core --filter @s9/server
+# The pnpm store is a BuildKit cache, so a retried build resumes the download
+# instead of starting over. Low concurrency keeps a slow registry from
+# starving the large tarballs.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
+    pnpm install --frozen-lockfile --filter @s9/core --filter @s9/server \
+      --store-dir=/pnpm-store \
+      --network-concurrency=2 \
+      --fetch-retries=5 \
+      --fetch-retry-mintimeout=10000 \
+      --fetch-retry-maxtimeout=120000 \
+      --fetch-timeout=600000
 
 COPY packages/core packages/core
 COPY packages/server packages/server

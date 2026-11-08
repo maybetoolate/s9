@@ -3,7 +3,7 @@ import { logger } from './lib/logger.js';
 import { closePool } from './db/pool.js';
 import { runSchedulerOnce } from './engine/scheduler.js';
 import { pruneOutboxEvents } from './db/repo.js';
-import { getPool } from './db/pool.js';
+import { getDb } from './db/client.js';
 import { LIMITS } from '@s9/core';
 
 /**
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   // Published outbox rows are removed after the retention period so the table
   // does not grow without bound.
   const cleanupTimer = setInterval(() => {
-    void pruneOutboxEvents(getPool(), LIMITS.outboxRetentionDays)
+    void pruneOutboxEvents(getDb(), LIMITS.outboxRetentionDays)
       .then((removed) => {
         if (removed > 0) logger.info({ removed }, 'old outbox rows were pruned');
       })

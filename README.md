@@ -35,7 +35,7 @@ retry, because a timeout does not prove the remote operation failed.
 
 ## Quick start
 
-Requirements: Docker (for PostgreSQL and Redis), Node.js 20.11+ for the web app and tooling, and either Bun 1.1+ or Node.js 22+ for the API, auth, worker and scheduler. Bun is the default runtime; the Docker images and dev scripts use it.
+Requirements: Docker (for PostgreSQL and Redis), Node.js 20.11+ for the web app and tooling, and either Bun 1.1+ or Node.js 22+ for the API (which embeds authentication), worker and scheduler. Bun is the default runtime; the Docker images and dev scripts use it.
 
 ```bash
 # 1. Configure the environment
@@ -52,12 +52,12 @@ pnpm install
 pnpm db:migrate
 pnpm db:seed
 
-# 4. Run the auth service, the API, the worker, the scheduler and the web app
+# 4. Run the API (authentication included), the worker, the scheduler and the web app
 pnpm dev
 ```
 
-The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, the auth service on port `4001`
-(internal; not published by Compose), and the mail catcher on <http://localhost:8025>.
+The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, and the mail catcher on
+<http://localhost:8025>. Authentication is served by the API itself at `/api/auth/*`.
 
 ### Node.js runtime
 
@@ -67,7 +67,6 @@ processes with the `:node` scripts:
 ```bash
 pnpm --filter @s9/server build
 pnpm --filter @s9/server start:api:node
-pnpm --filter @s9/server start:auth:node
 pnpm --filter @s9/server start:worker:node
 pnpm --filter @s9/server start:scheduler:node
 ```
@@ -96,14 +95,12 @@ docker compose up --build -d
 docker compose exec api bun packages/server/dist/cli-seed.js
 ```
 
-This starts `web`, `api`, `auth`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit`, `sink` and `dozzle`. The API and
-the auth service apply migrations on start (serialised by an advisory lock), so they can start in any order.
+This starts `web`, `api`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit`, `sink` and `dozzle`. The API, the worker
+and the scheduler apply migrations on start (serialised by an advisory lock), so they can start in any order.
 
-The auth service owns the Better-Auth tables. It is reachable only on the Compose network; its port is not published to
-the host. The API talks to it with an OAuth2 client-credentials access token issued by Better-Auth's OAuth provider
-(`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`) and caches the short-lived token until it expires. The service client is
-created on start from those environment variables, so rotating the secret is a matter of changing it and restarting.
-The default in `.env.example` is for local development only.
+Authentication is embedded in the API process: Better-Auth shares the application Drizzle client and owns only its
+`user`, `session`, `account` and `verification` tables. No separate auth container or shared service secret is needed;
+the browser only talks to the API's `/api/auth/*` surface.
 
 The seed has to run in the same environment as the worker: it stores the demo notification destination in the workflow
 definition, and the worker has to be able to reach it. The seed warns when the destination is not reachable.
@@ -114,8 +111,8 @@ The services write structured JSON logs. Instead of reading the raw stream, use 
 
 - **Web log viewer** — <http://localhost:8080> (Dozzle). Start it with `docker compose up -d dozzle`; it lists every
   container in the project, follows logs live, and lets you search, filter by level and switch containers.
-- **Pretty CLI logs** — `pnpm logs` follows `auth`, `api`, `worker` and `scheduler` through `pino-pretty`. Use
-  `pnpm logs:auth`, `pnpm logs:api`, `pnpm logs:worker`, `pnpm logs:scheduler` or `pnpm logs:web` for a single service.
+- **Pretty CLI logs** — `pnpm logs` follows `api`, `worker` and `scheduler` through `pino-pretty`. Use
+  `pnpm logs:api`, `pnpm logs:worker`, `pnpm logs:scheduler` or `pnpm logs:web` for a single service.
 
 ```bash
 docker compose up -d dozzle   # then open http://localhost:8080
@@ -165,15 +162,15 @@ delivery** button that signs and delivers a sample payload and shows you the exa
 packages/
   core/     shared domain logic: limits, state machine, definition schema,
             variable mapping, error taxonomy, schedule resolution, SSRF rules
-  server/   API, auth service, worker, scheduler, action adapters, migrations, tests
+  server/   API with embedded auth, worker, scheduler, action adapters, Drizzle schema and migrations, tests
   web/      Next.js app (dashboard, builder, execution history)
   neovim/   companion Neovim plugin: workflows, runs and recovery
 docs/       architecture, API reference, operations guide, ADRs, limitations
 docker/     container images for the api, worker and web app
 ```
 
-The auth service, the API, the worker and the scheduler share one codebase but run as separate processes, exactly as the
-blueprint requires.
+The API, the worker and the scheduler share one codebase but run as separate processes. Authentication is a module
+inside the API, not a separate service, so the API is the only browser-facing process.
 
 ---
 

@@ -1,4 +1,3 @@
-import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import {
   buildExecutionIdempotencyKey,
@@ -13,8 +12,11 @@ import {
   ConflictError,
   createExecutionWithOutbox,
   createStepExecutions,
+  findExecutionByIdempotencyKey,
   getExecution,
   getStepExecution,
+  getTriggerEventResponse,
+  getVersion,
   getWorkflow,
   insertAuditEvent,
   insertOutboxEvent,
@@ -23,12 +25,13 @@ import {
   setTriggerEventResponse,
   linkOccurrenceToExecution,
   recordManualResolution,
+  requeueExecution,
   requireWorkflow,
   resetStepForRetry,
   updateExecutionStatus,
   type Db,
 } from '../db/repo.js';
-import { withTransaction } from '../db/pool.js';
+import { withTransaction } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -67,7 +70,7 @@ export interface CreateExecutionRequest {
  */
 export async function createExecution(request: CreateExecutionRequest): Promise<{ id: string; duplicate: boolean }> {
   return withTransaction(async (client) => {
-    const existing = await findExistingByIdempotencyKey(client, request.workflowId, request.idempotencyKey);
+    const existing = await findExecutionByIdempotencyKey(client, request.workflowId, request.idempotencyKey);
     if (existing) {
       logger.info(
         { executionId: existing.id, workflowId: request.workflowId },
@@ -108,18 +111,6 @@ export async function createExecution(request: CreateExecutionRequest): Promise<
   });
 }
 
-async function findExistingByIdempotencyKey(
-  client: PoolClient,
-  workflowId: string,
-  idempotencyKey: string,
-): Promise<{ id: string } | null> {
-  const result = await client.query<{ id: string }>(
-    'SELECT id FROM executions WHERE workflow_id = $1 AND idempotency_key = $2',
-    [workflowId, idempotencyKey],
-  );
-  return result.rows[0] ?? null;
-}
-
 /**
  * Creates an execution for a webhook delivery.
  *
@@ -147,11 +138,8 @@ export async function createWebhookExecution(input: {
     });
 
     if (!triggerEvent.created) {
-      const existing = await client.query<{ response: { executionId?: string } | null }>(
-        'SELECT response FROM trigger_events WHERE id = $1',
-        [triggerEvent.row.id],
-      );
-      const executionId = existing.rows[0]?.response?.executionId;
+      const response = await getTriggerEventResponse(client, triggerEvent.row.id);
+      const executionId = response?.executionId as string | undefined;
       if (!executionId) {
         throw new ConflictError('the event was received but its execution is not known', 'duplicate_event');
       }
@@ -182,7 +170,7 @@ export async function createWebhookExecution(input: {
  * guarantee a fresh job id.
  */
 export async function scheduleContinuation(
-  client: PoolClient,
+  client: Db,
   input: {
     executionId: string;
     runSequence: number;
@@ -266,15 +254,7 @@ export async function retryStep(input: {
 
     await resetStepForRetry(client, step.id);
 
-    const updated = await client.query<{ run_sequence: number }>(
-      `UPDATE executions
-          SET status = 'queued', error = NULL, finished_at = NULL, run_sequence = run_sequence + 1,
-              worker_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-        WHERE id = $1
-        RETURNING run_sequence`,
-      [input.executionId],
-    );
-    const runSequence = updated.rows[0]?.run_sequence ?? execution.run_sequence + 1;
+    const runSequence = (await requeueExecution(client, input.executionId)) ?? execution.run_sequence + 1;
 
     await scheduleContinuation(client, {
       executionId: input.executionId,
@@ -326,11 +306,8 @@ export async function rerunExecution(input: {
       workflowVersionId = workflow.current_version_id;
     }
 
-    const version = await client.query<{ definition: Record<string, unknown> }>(
-      'SELECT definition FROM workflow_versions WHERE id = $1',
-      [workflowVersionId],
-    );
-    const definition = version.rows[0]?.definition as WorkflowDefinition | undefined;
+    const version = workflowVersionId ? await getVersion(client, workflowVersionId) : null;
+    const definition = version?.definition as WorkflowDefinition | undefined;
 
     const idempotencyKey = buildExecutionIdempotencyKey({
       workflowId: original.workflow_id,
@@ -437,15 +414,7 @@ export async function resolveOutcomeUnknown(input: {
     }
 
     // The step is confirmed as succeeded: continue with the remaining steps.
-    const updated = await client.query<{ run_sequence: number }>(
-      `UPDATE executions
-          SET status = 'queued', error = NULL, finished_at = NULL, run_sequence = run_sequence + 1,
-              worker_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-        WHERE id = $1
-        RETURNING run_sequence`,
-      [input.executionId],
-    );
-    const runSequence = updated.rows[0]?.run_sequence ?? execution.run_sequence + 1;
+    const runSequence = (await requeueExecution(client, input.executionId)) ?? execution.run_sequence + 1;
 
     await scheduleContinuation(client, {
       executionId: input.executionId,
@@ -498,7 +467,7 @@ export async function cancelExecution(input: {
 
 /** Links a schedule occurrence to the execution it created. */
 export async function linkOccurrence(
-  client: PoolClient,
+  client: Db,
   occurrenceId: string,
   executionId: string,
 ): Promise<void> {

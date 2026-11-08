@@ -7,7 +7,7 @@ import {
 } from '@s9/core';
 import { getWebhookEndpointBySlug, getWorkflowById, countRunningExecutions } from '../../db/repo.js';
 import type { WebhookEndpointRow } from '../../db/rows.js';
-import { getPool } from '../../db/pool.js';
+import { getDb } from '../../db/client.js';
 import { ApiError, jsonRoute } from '../http.js';
 import { createWebhookExecution } from '../../engine/execution-service.js';
 import { logger } from '../../lib/logger.js';
@@ -35,7 +35,7 @@ const EVENT_ID_HEADER = 'x-event-id';
 export async function registerWebhookRoutes(app: App): Promise<void> {
   app.post('/webhooks/:slug', jsonRoute(async (c) => {
     const slug = c.req.param('slug')!;
-    const db = getPool();
+    const db = getDb();
 
     const endpoint = await getWebhookEndpointBySlug(db, slug);
     if (!endpoint) {

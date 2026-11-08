@@ -2,8 +2,9 @@
 /**
  * Local development launcher.
  *
- * Starts the auth service, the API, the worker, the scheduler and the web app
- * together, with prefixed output so it is obvious which process printed what.
+ * Starts the API (which embeds authentication), the worker, the scheduler and
+ * the web app together, with prefixed output so it is obvious which process
+ * printed what.
  */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -13,7 +14,6 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const COLORS = {
-  auth: '\u001b[34m',
   api: '\u001b[36m',
   worker: '\u001b[35m',
   scheduler: '\u001b[33m',
@@ -68,7 +68,6 @@ if (!existsSync(resolve(root, '.env'))) {
 
 console.log('Starting s9 in development mode. Press Ctrl+C to stop.\n');
 
-run('auth', 'pnpm', ['--filter', '@s9/server', 'dev:auth']);
 run('api', 'pnpm', ['--filter', '@s9/server', 'dev:api']);
 run('worker', 'pnpm', ['--filter', '@s9/server', 'dev:worker']);
 run('scheduler', 'pnpm', ['--filter', '@s9/server', 'dev:scheduler']);

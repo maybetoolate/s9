@@ -1,9 +1,12 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { sql } from 'drizzle-orm';
 import { buildServer } from '../../src/api/server.js';
-import { auth } from '../../src/api/auth.js';
-import { closePool, getPool, withTransaction } from '../../src/db/pool.js';
-import { addMembership, createWorkflow, getPool as _getPool } from '../../src/db/repo.js';
+import { auth } from '../../src/auth/index.js';
+import { closePool } from '../../src/db/pool.js';
+import { getDb, withTransaction } from '../../src/db/client.js';
+import { addMembership, createWorkflow } from '../../src/db/repo.js';
+import { workspaceMemberships, workspaces } from '../../src/db/schema.js';
 import { runExecutionContinuation } from '../../src/engine/execution-engine.js';
 import { createActionExecutors, createActionRegistry } from '../../src/actions/index.js';
 import { dispatchOutboxOnce } from '../../src/engine/dispatcher.js';
@@ -121,19 +124,20 @@ function extractCookie(setCookie: string | string[] | undefined): string {
 }
 
 async function ensureWorkspace(userId: string, email: string): Promise<string> {
-  const db = getPool();
-  const existing = await db.query<{ id: string }>(
-    'SELECT workspace_id AS id FROM workspace_memberships WHERE user_id = $1 LIMIT 1',
-    [userId],
-  );
-  if (existing.rows[0]) return existing.rows[0].id;
+  const db = getDb();
+  const [existing] = await db
+    .select({ id: workspaceMemberships.workspace_id })
+    .from(workspaceMemberships)
+    .where(sql`${workspaceMemberships.user_id} = ${userId}`)
+    .limit(1);
+  if (existing) return existing.id;
 
   return withTransaction(async (client) => {
-    const workspace = await client.query<{ id: string }>(
-      'INSERT INTO workspaces (name) VALUES ($1) RETURNING id',
-      [`Workspace ${email}`],
-    );
-    const id = workspace.rows[0]!.id;
+    const [workspace] = await client
+      .insert(workspaces)
+      .values({ name: `Workspace ${email}` })
+      .returning({ id: workspaces.id });
+    const id = workspace!.id;
     await addMembership(client, id, userId, 'owner');
     return id;
   });
@@ -145,7 +149,6 @@ export async function createPublishedWorkflow(
   definition: Record<string, unknown>,
   options: { name?: string; publish?: boolean } = {},
 ): Promise<{ id: string; versionId: string; webhookSecret?: string; webhookSlug?: string }> {
-  const db = getPool();
   const trigger = definition.trigger as { type: string };
 
   const workflow = await withTransaction(async (client) =>
@@ -267,8 +270,7 @@ export async function startTestServer(): Promise<TestServer> {
 
 /** Removes every row from the transactional tables. */
 export async function resetData(): Promise<void> {
-  const db = getPool();
-  await db.query(`
+  await getDb().execute(sql`
     TRUNCATE TABLE
       step_attempts, step_executions, executions, trigger_events, outbox_events,
       retry_requests, audit_events, schedule_occurrences, schedules,
@@ -278,4 +280,4 @@ export async function resetData(): Promise<void> {
   `);
 }
 
-export { closePool, getPool, buildServer };
+export { closePool, getDb, buildServer };

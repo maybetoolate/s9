@@ -1,7 +1,7 @@
 import type { Context, Hono } from 'hono';
-import { validateSession, type SessionInfo } from '../auth/client.js';
+import { validateSession, type SessionInfo } from '../auth/index.js';
 import { findMembership, listWorkspacesForUser } from '../db/repo.js';
-import { getPool } from '../db/pool.js';
+import { getDb } from '../db/client.js';
 import { ApiError } from './http.js';
 
 /**
@@ -60,7 +60,7 @@ export async function requireContext(
   const session = await getSession(c);
   if (!session) throw ApiError.unauthorized();
 
-  const db = getPool();
+  const db = getDb();
   const workspaces = await listWorkspacesForUser(db, session.userId);
   const first = workspaces[0];
   if (!first) {

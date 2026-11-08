@@ -17,20 +17,25 @@ import {
   type WorkflowDefinition,
 } from '@s9/core';
 import {
+  claimExecution,
   countConsumedAttempts,
+  countOtherRunningExecutions,
   createStepExecutions,
+  deferExecution,
   finishStepAttempt,
   getExecutionById,
   getStepExecution,
   getVersion,
+  heartbeatExecution,
   insertAuditEvent,
   insertStepAttempt,
   listStepExecutions,
+  skipRemainingSteps,
   updateExecutionStatus,
   updateStepExecution,
   type Db,
 } from '../db/repo.js';
-import { getPool, withTransaction } from '../db/pool.js';
+import { getDb, withTransaction } from '../db/client.js';
 import { executionLogger } from '../lib/logger.js';
 import { resolveCredential } from './credentials.js';
 import { scheduleContinuation } from './execution-service.js';
@@ -69,7 +74,7 @@ export async function runExecutionContinuation(
   options: EngineOptions,
 ): Promise<ContinuationResult> {
   const { registry, executors, workerId, leaseDurationMs } = options;
-  const db = getPool();
+  const db = getDb();
   const log = executionLogger({ executionId: job.executionId, workerId });
 
   const execution = await getExecutionById(db, job.executionId);
@@ -110,7 +115,12 @@ export async function runExecutionContinuation(
 
   const leaseToken = randomUUID();
   const claimed = await withTransaction((client) =>
-    claimExecution(client, execution.id, workerId, leaseToken, leaseDurationMs),
+    claimExecution(client, {
+      executionId: execution.id,
+      workerId,
+      leaseToken,
+      leaseDurationMs,
+    }),
   );
 
   if (!claimed) {
@@ -119,7 +129,11 @@ export async function runExecutionContinuation(
   }
 
   const heartbeat = setInterval(() => {
-    void heartbeatExecution(db, execution.id, leaseToken, leaseDurationMs).catch((error) => {
+    void heartbeatExecution(db, {
+      executionId: execution.id,
+      leaseToken,
+      leaseDurationMs,
+    }).catch((error) => {
       log.error({ err: error }, 'lease heartbeat failed');
     });
   }, LIMITS.leaseHeartbeatMs);
@@ -163,53 +177,6 @@ export async function runExecutionContinuation(
 }
 
 // ------------------------------------------------------------------- helpers
-
-async function claimExecution(
-  client: import('pg').PoolClient,
-  executionId: string,
-  workerId: string,
-  leaseToken: string,
-  leaseDurationMs: number,
-): Promise<{ id: string } | null> {
-  const result = await client.query(
-    `UPDATE executions
-        SET status = 'running',
-            worker_id = $2,
-            lease_token = $3,
-            lease_expires_at = now() + ($4 || ' milliseconds')::interval,
-            started_at = COALESCE(started_at, now()),
-            updated_at = now()
-      WHERE id = $1
-        AND status IN ('queued', 'running', 'retrying')
-        AND (lease_expires_at IS NULL OR lease_expires_at < now() OR lease_token = $3)
-      RETURNING id`,
-    [executionId, workerId, leaseToken, String(leaseDurationMs)],
-  );
-  return (result.rows[0] as { id: string } | undefined) ?? null;
-}
-
-async function heartbeatExecution(
-  db: Db,
-  executionId: string,
-  leaseToken: string,
-  leaseDurationMs: number,
-): Promise<void> {
-  await db.query(
-    `UPDATE executions
-        SET lease_expires_at = now() + ($3 || ' milliseconds')::interval
-      WHERE id = $1 AND lease_token = $2 AND status = 'running'`,
-    [executionId, leaseToken, String(leaseDurationMs)],
-  );
-}
-
-async function countOtherRunningExecutions(db: Db, workflowId: string, executionId: string): Promise<number> {
-  const result = await db.query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM executions
-      WHERE workflow_id = $1 AND id <> $2 AND status = 'running'`,
-    [workflowId, executionId],
-  );
-  return Number(result.rows[0]?.count ?? 0);
-}
 
 async function ensureStepRows(db: Db, executionId: string, definition: WorkflowDefinition): Promise<void> {
   await withTransaction((client) =>
@@ -260,7 +227,7 @@ async function runSteps(input: {
       return { kind: 'failed', error: { class: 'permanent_provider', message: 'the execution disappeared' } };
     }
     if (current.status === 'cancelled') {
-      await skipRemaining(db, executionId, stepRow.step_index);
+      await skipRemainingSteps(db, executionId, stepRow.step_index);
       return { kind: 'failed', error: { class: 'permanent_provider', message: 'the execution was cancelled' } };
     }
 
@@ -506,15 +473,6 @@ async function recordStepFailure(
   );
 }
 
-async function skipRemaining(db: Db, executionId: string, fromStepIndex: number): Promise<void> {
-  await db.query(
-    `UPDATE step_executions
-        SET status = 'skipped', finished_at = now(), updated_at = now()
-      WHERE execution_id = $1 AND step_index > $2 AND status = 'pending'`,
-    [executionId, fromStepIndex],
-  );
-}
-
 async function collectStepOutputs(db: Db, executionId: string): Promise<Record<string, unknown>> {
   const steps = await listStepExecutions(db, executionId);
   const outputs: Record<string, unknown> = {};
@@ -611,18 +569,10 @@ async function deferContinuation(
   delayMs: number,
 ): Promise<void> {
   await withTransaction(async (client) => {
-    const result = await client.query<{ run_sequence: number }>(
-      `UPDATE executions
-          SET status = 'retrying', run_sequence = run_sequence + 1,
-              worker_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-        WHERE id = $1 AND status IN ('queued', 'running', 'retrying')
-        RETURNING run_sequence`,
-      [execution.id],
-    );
-    const runSequence = result.rows[0]?.run_sequence ?? execution.run_sequence + 1;
+    const runSequence = await deferExecution(client, execution.id);
     await scheduleContinuation(client, {
       executionId: execution.id,
-      runSequence,
+      runSequence: runSequence || execution.run_sequence + 1,
       workspaceId: execution.workspace_id,
       workflowId: execution.workflow_id,
       delayMs,

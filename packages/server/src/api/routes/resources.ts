@@ -8,6 +8,7 @@ import {
   validateDefinition,
   type ActionType,
 } from '@s9/core';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   countOutboxByStatus,
   findCredentialReferences,
@@ -20,21 +21,22 @@ import {
   listSchedules,
   listWorkflows,
   outboxLagSeconds,
+  setScheduleEnabled,
   softDeleteCredential,
   updateCredentialSecret,
   countRunningExecutionsInWorkspace,
   getExecution,
   listExecutions,
 } from '../../db/repo.js';
-import { getPool, withTransaction } from '../../db/pool.js';
-import { getUserProfile } from '../../auth/client.js';
+import { databaseNow, getDb, withTransaction } from '../../db/client.js';
+import { executions, workflows } from '../../db/schema.js';
+import { getUserProfile } from '../../auth/index.js';
 import { requireContext } from '../context.js';
 import { ApiError, jsonRoute, paginated, parsePagination, readJson } from '../http.js';
 import { toAuditEventDto, toCredentialDto, toExecutionSummary, toScheduleDto } from '../mappers.js';
 import { encrypt } from '../../lib/secrets.js';
 import { getRedis } from '../../queue/connection.js';
 import { getExecutionQueue } from '../../queue/execution-queue.js';
-import { databaseNow } from '../../db/pool.js';
 
 /**
  * Resource routes: credentials, the action registry, schedules, the audit
@@ -52,7 +54,8 @@ export async function registerResourceRoutes(app: App): Promise<void> {
   // -------------------------------------------------------------- me
   app.get('/api/me', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
-    // The profile lives in the auth service; the API never reads its tables.
+    // The profile lives in the auth module; the workflow code never reads its
+    // tables directly.
     const profile = await getUserProfile(ctx.userId);
     if (!profile) throw ApiError.unauthorized('the account no longer exists');
     return {
@@ -65,30 +68,38 @@ export async function registerResourceRoutes(app: App): Promise<void> {
   // -------------------------------------------------------- dashboard
   app.get('/api/dashboard', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
-    const db = getPool();
+    const db = getDb();
 
-    const workflows = await listWorkflows(db, ctx.workspaceId, { page: 1, pageSize: 1 });
-    const byStatus = await db.query<{ status: string; count: string }>(
-      'SELECT status, count(*)::text AS count FROM workflows WHERE workspace_id = $1 GROUP BY status',
-      [ctx.workspaceId],
-    );
+    const workflowPage = await listWorkflows(db, ctx.workspaceId, { page: 1, pageSize: 1 });
+    const byStatus = await db
+      .select({ status: workflows.status, count: sql<string>`count(*)::text` })
+      .from(workflows)
+      .where(eq(workflows.workspace_id, ctx.workspaceId))
+      .groupBy(workflows.status);
     const statusCounts: Record<string, number> = { draft: 0, published: 0, paused: 0, archived: 0 };
-    for (const row of byStatus.rows) statusCounts[row.status] = Number(row.count);
+    for (const row of byStatus) statusCounts[row.status] = Number(row.count);
 
-    const execCounts = await db.query<{ status: string; count: string }>(
-      `SELECT status, count(*)::text AS count FROM executions
-        WHERE workspace_id = $1 AND is_test = false GROUP BY status`,
-      [ctx.workspaceId],
-    );
+    const execCounts = await db
+      .select({ status: executions.status, count: sql<string>`count(*)::text` })
+      .from(executions)
+      .where(and(eq(executions.workspace_id, ctx.workspaceId), eq(executions.is_test, false)))
+      .groupBy(executions.status);
     const execStatus: Record<string, number> = {};
-    for (const row of execCounts.rows) execStatus[row.status] = Number(row.count);
+    for (const row of execCounts) execStatus[row.status] = Number(row.count);
 
-    const last7 = await db.query<{ count: string; average_ms: string | null }>(
-      `SELECT count(*)::text AS count, avg(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000)::text AS average_ms
-         FROM executions
-        WHERE workspace_id = $1 AND is_test = false AND created_at > now() - interval '7 days'`,
-      [ctx.workspaceId],
-    );
+    const [last7] = await db
+      .select({
+        count: sql<string>`count(*)::text`,
+        average_ms: sql<string | null>`avg(EXTRACT(EPOCH FROM (${executions.finished_at} - ${executions.started_at})) * 1000)::text`,
+      })
+      .from(executions)
+      .where(
+        and(
+          eq(executions.workspace_id, ctx.workspaceId),
+          eq(executions.is_test, false),
+          sql`${executions.created_at} > now() - interval '7 days'`,
+        ),
+      );
 
     const recent = await listExecutions(db, ctx.workspaceId, { page: 1, pageSize: 10 });
     const needsAttention = await listExecutions(db, ctx.workspaceId, {
@@ -103,7 +114,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
 
     return {
       workflows: {
-        total: workflows.total,
+        total: workflowPage.total,
         draft: statusCounts.draft ?? 0,
         published: statusCounts.published ?? 0,
         paused: statusCounts.paused ?? 0,
@@ -115,8 +126,8 @@ export async function registerResourceRoutes(app: App): Promise<void> {
         failed,
         running: execStatus.running ?? 0,
         queued: execStatus.queued ?? 0,
-        last7Days: Number(last7.rows[0]?.count ?? 0),
-        averageDurationMs: last7.rows[0]?.average_ms ? Number(last7.rows[0].average_ms) : null,
+        last7Days: Number(last7?.count ?? 0),
+        averageDurationMs: last7?.average_ms ? Number(last7.average_ms) : null,
         successRate: total > 0 ? succeeded / total : null,
       },
       recentExecutions: recent.rows.map(toExecutionSummary),
@@ -162,7 +173,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
   // ----------------------------------------------------- credentials
   app.get('/api/credentials', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
-    const rows = await listCredentials(getPool(), ctx.workspaceId);
+    const rows = await listCredentials(getDb(), ctx.workspaceId);
     return { data: rows.map(toCredentialDto) };
   }));
 
@@ -200,7 +211,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
     const { id } = c.req.param() as { id: string };
     const body = z.object({ secret: z.string().min(1).max(10_000) }).parse(await readJson(c));
 
-    const db = getPool();
+    const db = getDb();
     const credential = await getCredential(db, ctx.workspaceId, id);
     if (!credential) throw ApiError.notFound('credential not found');
 
@@ -225,7 +236,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
     const ctx = await requireContext(c, { capabilities: ['manage_credentials'] });
     const { id } = c.req.param() as { id: string };
 
-    const db = getPool();
+    const db = getDb();
     const credential = await getCredential(db, ctx.workspaceId, id);
     if (!credential) throw ApiError.notFound('credential not found');
 
@@ -257,35 +268,37 @@ export async function registerResourceRoutes(app: App): Promise<void> {
   // ------------------------------------------------------- schedules
   app.get('/api/schedules', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
-    const rows = await listSchedules(getPool(), ctx.workspaceId);
+    const rows = await listSchedules(getDb(), ctx.workspaceId);
     return { data: rows.map((row) => ({ ...toScheduleDto(row), workflowName: row.workflow_name })) };
   }));
 
   app.post('/api/schedules/:workflowId/enable', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['publish'] });
     const { workflowId } = c.req.param() as { workflowId: string };
-    const db = getPool();
+    const db = getDb();
     const rows = await listSchedules(db, ctx.workspaceId);
     const schedule = rows.find((row) => row.workflow_id === workflowId);
     if (!schedule) throw ApiError.notFound('the workflow has no schedule');
 
     const { computeNextRun } = await import('../../engine/scheduler.js');
-    await db.query('UPDATE schedules SET enabled = true, next_run_at = $2 WHERE id = $1', [
+    await setScheduleEnabled(
+      db,
       schedule.id,
+      true,
       computeNextRun(schedule.schedule_spec, schedule.timezone),
-    ]);
+    );
     return { ok: true, enabled: true };
   }));
 
   app.post('/api/schedules/:workflowId/disable', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['publish'] });
     const { workflowId } = c.req.param() as { workflowId: string };
-    const db = getPool();
+    const db = getDb();
     const rows = await listSchedules(db, ctx.workspaceId);
     const schedule = rows.find((row) => row.workflow_id === workflowId);
     if (!schedule) throw ApiError.notFound('the workflow has no schedule');
 
-    await db.query('UPDATE schedules SET enabled = false, next_run_at = NULL WHERE id = $1', [schedule.id]);
+    await setScheduleEnabled(db, schedule.id, false, null);
     return { ok: true, enabled: false };
   }));
 
@@ -295,7 +308,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
     const query = c.req.query();
     const pagination = parsePagination(query);
 
-    const { rows, total } = await listAuditEvents(getPool(), ctx.workspaceId, {
+    const { rows, total } = await listAuditEvents(getDb(), ctx.workspaceId, {
       targetType: typeof query.targetType === 'string' ? query.targetType : undefined,
       targetId: typeof query.targetId === 'string' ? query.targetId : undefined,
       page: pagination.page,
@@ -308,7 +321,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
   // ------------------------------------------------------ operations
   app.get('/api/ops/queue', jsonRoute(async (c) => {
     await requireContext(c, { capabilities: ['read'] });
-    const db = getPool();
+    const db = getDb();
 
     const queue = getExecutionQueue(getRedis());
     const counts = (await queue.getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed')) as Record<
@@ -342,7 +355,7 @@ export async function registerResourceRoutes(app: App): Promise<void> {
 
   app.get('/api/ops/workspace-usage', jsonRoute(async (c) => {
     const ctx = await requireContext(c, { capabilities: ['read'] });
-    const active = await countRunningExecutionsInWorkspace(getPool(), ctx.workspaceId);
+    const active = await countRunningExecutionsInWorkspace(getDb(), ctx.workspaceId);
     return { activeExecutions: active };
   }));
 }

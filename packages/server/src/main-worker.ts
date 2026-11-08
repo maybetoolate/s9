@@ -1,7 +1,8 @@
 import { Worker, type Job } from 'bullmq';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
-import { closePool, getPool } from './db/pool.js';
+import { closePool } from './db/pool.js';
+import { getDb } from './db/client.js';
 import { closeRedis, getBlockingRedis, getRedis } from './queue/connection.js';
 import { EXECUTION_QUEUE, getExecutionQueue, type ExecutionJobData } from './queue/execution-queue.js';
 import { createActionExecutors, createActionRegistry } from './actions/index.js';
@@ -48,7 +49,7 @@ function runReconcilerTick(): void {
 }
 
 function runHeartbeatTick(): void {
-  void upsertHeartbeat(getPool(), { workerId, currentExecutionId: null }).catch((error) => {
+  void upsertHeartbeat(getDb(), { workerId, currentExecutionId: null }).catch((error) => {
     logger.error({ err: error }, 'the worker heartbeat failed');
   });
 }

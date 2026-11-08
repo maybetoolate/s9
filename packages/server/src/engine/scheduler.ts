@@ -7,14 +7,17 @@ import {
   nextOccurrences,
   type ScheduleOccurrence,
 } from '@s9/core';
+import { eq } from 'drizzle-orm';
 import {
+  getWorkflowById,
   insertScheduleOccurrence,
   linkOccurrenceToExecution,
   listDueSchedules,
   updateScheduleRunState,
   type ScheduleRow,
 } from '../db/repo.js';
-import { databaseNow, getPool, withAdvisoryLock, withTransaction } from '../db/pool.js';
+import { databaseNow, getDb, withAdvisoryLock, withTransaction } from '../db/client.js';
+import { schedules } from '../db/schema.js';
 import { logger } from '../lib/logger.js';
 import { createExecution } from './execution-service.js';
 
@@ -37,7 +40,7 @@ export interface SchedulerResult {
 }
 
 export async function runSchedulerOnce(): Promise<SchedulerResult> {
-  const db = getPool();
+  const db = getDb();
   const now = await databaseNow();
   const result: SchedulerResult = { schedulesChecked: 0, occurrencesCreated: 0, executionsCreated: 0 };
 
@@ -57,8 +60,6 @@ export async function runSchedulerOnce(): Promise<SchedulerResult> {
 }
 
 async function processSchedule(schedule: ScheduleRow, now: Date) {
-  const db = getPool();
-
   if (!isValidCron(schedule.schedule_spec) || !isValidTimezone(schedule.timezone)) {
     logger.error({ scheduleId: schedule.id }, 'the schedule is invalid and was skipped');
     return { occurrencesCreated: 0, executionsCreated: 0 };
@@ -66,8 +67,11 @@ async function processSchedule(schedule: ScheduleRow, now: Date) {
 
   // The advisory lock keeps a single creator for this schedule.
   return withAdvisoryLock(`schedule:${schedule.id}`, async (client) => {
-    const current = await client.query<ScheduleRow>('SELECT * FROM schedules WHERE id = $1 FOR UPDATE', [schedule.id]);
-    const row = current.rows[0];
+    const [row] = await client
+      .select()
+      .from(schedules)
+      .where(eq(schedules.id, schedule.id))
+      .for('update');
     if (!row || !row.enabled || !row.next_run_at || row.next_run_at > now) {
       return { occurrencesCreated: 0, executionsCreated: 0 };
     }
@@ -165,19 +169,9 @@ async function createScheduledExecution(
   occurrence: ScheduleOccurrence,
   occurrenceId: string,
 ): Promise<number> {
-  const db = getPool();
+  const db = getDb();
 
-  const row = await db.query<{
-    id: string;
-    workspace_id: string;
-    status: string;
-    current_version_id: string | null;
-  }>(
-    `SELECT w.id, w.workspace_id, w.status, w.current_version_id
-       FROM workflows w WHERE w.id = $1`,
-    [schedule.workflow_id],
-  );
-  const wf = row.rows[0];
+  const wf = await getWorkflowById(db, schedule.workflow_id);
   if (!wf) {
     logger.error({ scheduleId: schedule.id }, 'the workflow of the schedule no longer exists');
     return 0;

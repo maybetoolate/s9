@@ -9,7 +9,7 @@ import {
   type ClassifiedError,
 } from '@s9/core';
 import { upsertContact } from '../db/repo.js';
-import { getPool } from '../db/pool.js';
+import { getDb } from '../db/client.js';
 
 /**
  * The database insert action.
@@ -55,7 +55,7 @@ export class DatabaseInsertExecutor implements ActionExecutor {
     }
 
     try {
-      const row = await upsertContact(getPool(), {
+      const row = await upsertContact(getDb(), {
         name: config.values.name ?? null,
         email: config.values.email ?? null,
         message: config.values.message ?? null,

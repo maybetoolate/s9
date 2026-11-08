@@ -3,7 +3,6 @@ import { defineConfig } from 'tsup';
 export default defineConfig({
   entry: {
     'main-api': 'src/main-api.ts',
-    'main-auth': 'src/main-auth.ts',
     'main-worker': 'src/main-worker.ts',
     'main-scheduler': 'src/main-scheduler.ts',
     'cli-migrate': 'src/cli/migrate.ts',

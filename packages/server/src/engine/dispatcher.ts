@@ -6,7 +6,7 @@ import {
   markOutboxPublished,
   type OutboxEventRow,
 } from '../db/repo.js';
-import { withTransaction } from '../db/pool.js';
+import { withTransaction } from '../db/client.js';
 import { logger } from '../lib/logger.js';
 import { enqueueExecution, type ExecutionJobData } from '../queue/execution-queue.js';
 

@@ -12,9 +12,19 @@ import {
   type TestContext,
   type TestServer,
 } from './helpers.js';
-import { getPool } from '../../src/db/pool.js';
+import { and, eq, sql } from 'drizzle-orm';
+import { getDb } from '../../src/db/client.js';
 import { listStepExecutions } from '../../src/db/repo.js';
-import { closePool } from '../../src/db/pool.js';
+import {
+  contacts,
+  executions,
+  outboxEvents,
+  retryRequests,
+  stepAttempts,
+  stepExecutions,
+  webhookEndpoints,
+  workflowVersions,
+} from '../../src/db/schema.js';
 import { decrypt } from '../../src/lib/secrets.js';
 import { resetEnvCache } from '../../src/config/env.js';
 
@@ -75,7 +85,6 @@ describe('execution pipeline', () => {
 
   afterAll(async () => {
     await server.close();
-    await closePool();
   });
 
   beforeEach(async () => {
@@ -126,12 +135,12 @@ describe('execution pipeline', () => {
     expect(secondBody.accepted).toBe(false);
     expect(secondBody.executionId).toBe(firstBody.executionId);
 
-    const db = getPool();
-    const count = await db.query<{ count: string }>(
-      'SELECT count(*)::text AS count FROM executions WHERE workflow_id = $1',
-      [workflow.id],
-    );
-    expect(Number(count.rows[0]?.count)).toBe(1);
+    const db = getDb();
+    const [count] = await db
+      .select({ count: sql<string>`count(*)::text` })
+      .from(executions)
+      .where(eq(executions.workflow_id, workflow.id));
+    expect(Number(count?.count)).toBe(1);
   });
 
   it('rejects an unauthenticated webhook without enqueueing work', async () => {
@@ -146,12 +155,12 @@ describe('execution pipeline', () => {
 
     expect(response.statusCode).toBe(401);
 
-    const db = getPool();
-    const count = await db.query<{ count: string }>(
-      'SELECT count(*)::text AS count FROM executions WHERE workflow_id = $1',
-      [workflow.id],
-    );
-    expect(Number(count.rows[0]?.count)).toBe(0);
+    const db = getDb();
+    const [countRow] = await db
+      .select({ count: sql<string>`count(*)::text` })
+      .from(executions)
+      .where(eq(executions.workflow_id, workflow.id));
+    expect(Number(countRow?.count)).toBe(0);
   });
 
   it('rejects a webhook with a bad signature', async () => {
@@ -213,21 +222,21 @@ describe('execution pipeline', () => {
     const result = await runContinuation(executionId);
     expect(result).toBe('completed');
 
-    const db = getPool();
-    const execution = await db.query<{ status: string; output: Record<string, unknown> | null }>(
-      'SELECT status, output FROM executions WHERE id = $1',
-      [executionId],
-    );
-    expect(execution.rows[0]?.status).toBe('succeeded');
+    const db = getDb();
+    const [execution] = await db
+      .select({ status: executions.status, output: executions.output })
+      .from(executions)
+      .where(eq(executions.id, executionId));
+    expect(execution?.status).toBe('succeeded');
 
     const steps = await listStepExecutions(db, executionId);
     expect(steps.map((step) => step.step_key)).toEqual(['save_contact', 'call_provider']);
     expect(steps.every((step) => step.status === 'succeeded')).toBe(true);
 
     // The second step received the resolved output of the first step.
-    const contact = await db.query<{ id: string }>('SELECT id FROM contacts LIMIT 1');
+    const [contact] = await db.select({ id: contacts.id }).from(contacts).limit(1);
     const providerCall = server.requests.find((request) => request.path === '/contacts');
-    expect(providerCall?.body).toContain(contact.rows[0]!.id);
+    expect(providerCall?.body).toContain(contact!.id);
     expect(providerCall?.body).not.toContain('{{');
   });
 
@@ -247,24 +256,33 @@ describe('execution pipeline', () => {
     const first = await runContinuation(executionId);
     expect(first).toBe('deferred');
 
-    const db = getPool();
-    const step = await db.query<{ status: string }>(
-      `SELECT status FROM step_executions WHERE execution_id = $1 AND step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(step.rows[0]?.status).toBe('retrying');
+    const db = getDb();
+    const [step] = await db
+      .select({ status: stepExecutions.status })
+      .from(stepExecutions)
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(step?.status).toBe('retrying');
 
     // The next continuation succeeds.
     const second = await runContinuation(executionId);
     expect(second).toBe('completed');
 
-    const attempts = await db.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM step_attempts se
-         JOIN step_executions s ON s.id = se.step_execution_id
-        WHERE s.execution_id = $1 AND s.step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(Number(attempts.rows[0]?.count)).toBe(2);
+    const [attempts] = await db
+      .select({ count: sql<string>`count(*)::text` })
+      .from(stepAttempts)
+      .innerJoin(stepExecutions, eq(stepExecutions.id, stepAttempts.step_execution_id))
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(Number(attempts?.count)).toBe(2);
   });
 
   it('stops the workflow on a permanent failure with a sanitised error', async () => {
@@ -283,14 +301,14 @@ describe('execution pipeline', () => {
     const result = await runContinuation(executionId);
     expect(result).toBe('failed');
 
-    const db = getPool();
-    const execution = await db.query<{ status: string; error: { class: string; message: string } | null }>(
-      'SELECT status, error FROM executions WHERE id = $1',
-      [executionId],
-    );
-    expect(execution.rows[0]?.status).toBe('failed');
-    expect(execution.rows[0]?.error?.class).toBe('permanent_provider');
-    expect(execution.rows[0]?.error?.message).not.toContain('ada@example.com');
+    const db = getDb();
+    const [execution] = await db
+      .select({ status: executions.status, error: executions.error })
+      .from(executions)
+      .where(eq(executions.id, executionId));
+    expect(execution?.status).toBe('failed');
+    expect(execution?.error?.class).toBe('permanent_provider');
+    expect(execution?.error?.message).not.toContain('ada@example.com');
   });
 
   it('marks a timed out non-idempotent step as outcome_unknown', async () => {
@@ -309,21 +327,30 @@ describe('execution pipeline', () => {
     const result = await runContinuation(executionId);
     expect(result).toBe('outcome_unknown');
 
-    const db = getPool();
-    const step = await db.query<{ status: string }>(
-      `SELECT status FROM step_executions WHERE execution_id = $1 AND step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(step.rows[0]?.status).toBe('outcome_unknown');
+    const db = getDb();
+    const [step] = await db
+      .select({ status: stepExecutions.status })
+      .from(stepExecutions)
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(step?.status).toBe('outcome_unknown');
 
     // The attempt is recorded as timed out and is never retried automatically.
-    const attempt = await db.query<{ status: string }>(
-      `SELECT sa.status FROM step_attempts sa
-         JOIN step_executions s ON s.id = sa.step_execution_id
-        WHERE s.execution_id = $1 AND s.step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(attempt.rows[0]?.status).toBe('timed_out');
+    const [attempt] = await db
+      .select({ status: stepAttempts.status })
+      .from(stepAttempts)
+      .innerJoin(stepExecutions, eq(stepExecutions.id, stepAttempts.step_execution_id))
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(attempt?.status).toBe('timed_out');
   });
 
   it('lets a user resolve an unknown outcome without editing the attempt history', async () => {
@@ -348,24 +375,36 @@ describe('execution pipeline', () => {
     });
     expect(resolve.statusCode).toBe(200);
 
-    const db = getPool();
-    const step = await db.query<{ status: string; resolved_manually: boolean; resolution: { reason: string } | null }>(
-      `SELECT status, resolved_manually, resolution FROM step_executions
-        WHERE execution_id = $1 AND step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(step.rows[0]?.status).toBe('succeeded');
-    expect(step.rows[0]?.resolved_manually).toBe(true);
-    expect(step.rows[0]?.resolution?.reason).toBe('verified in the provider dashboard');
+    const db = getDb();
+    const [step] = await db
+      .select({
+        status: stepExecutions.status,
+        resolved_manually: stepExecutions.resolved_manually,
+        resolution: stepExecutions.resolution,
+      })
+      .from(stepExecutions)
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(step?.status).toBe('succeeded');
+    expect(step?.resolved_manually).toBe(true);
+    expect(step?.resolution?.reason).toBe('verified in the provider dashboard');
 
     // The original attempt is still recorded as timed out.
-    const attempt = await db.query<{ status: string }>(
-      `SELECT sa.status FROM step_attempts sa
-         JOIN step_executions s ON s.id = sa.step_execution_id
-        WHERE s.execution_id = $1 AND s.step_key = 'call_provider'`,
-      [executionId],
-    );
-    expect(attempt.rows[0]?.status).toBe('timed_out');
+    const [attempt] = await db
+      .select({ status: stepAttempts.status })
+      .from(stepAttempts)
+      .innerJoin(stepExecutions, eq(stepExecutions.id, stepAttempts.step_execution_id))
+      .where(
+        and(
+          eq(stepExecutions.execution_id, executionId),
+          eq(stepExecutions.step_key, 'call_provider'),
+        ),
+      );
+    expect(attempt?.status).toBe('timed_out');
   });
 
   it('does not repeat a successful step when a failed step is retried', async () => {
@@ -382,9 +421,9 @@ describe('execution pipeline', () => {
     await publishOutbox();
     await runContinuation(executionId);
 
-    const db = getPool();
-    const contactsBefore = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM contacts');
-    expect(Number(contactsBefore.rows[0]?.count)).toBe(1);
+    const db = getDb();
+    const [contactsBefore] = await db.select({ count: sql<string>`count(*)::text` }).from(contacts);
+    expect(Number(contactsBefore?.count)).toBe(1);
 
     const retry = await inject(context.app, {
       method: 'POST',
@@ -398,8 +437,8 @@ describe('execution pipeline', () => {
     await runContinuation(executionId);
 
     // The successful step was not repeated.
-    const contactsAfter = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM contacts');
-    expect(Number(contactsAfter.rows[0]?.count)).toBe(1);
+    const [contactsAfter] = await db.select({ count: sql<string>`count(*)::text` }).from(contacts);
+    expect(Number(contactsAfter?.count)).toBe(1);
   });
 
   it('creates one recovery for two simultaneous retry requests', async () => {
@@ -435,12 +474,12 @@ describe('execution pipeline', () => {
     expect(first.statusCode).toBeLessThan(400);
     expect(second.statusCode).toBeLessThan(400);
 
-    const db = getPool();
-    const requests = await db.query<{ count: string }>(
-      'SELECT count(*)::text AS count FROM retry_requests WHERE execution_id = $1',
-      [executionId],
-    );
-    expect(Number(requests.rows[0]?.count)).toBe(1);
+    const db = getDb();
+    const [requests] = await db
+      .select({ count: sql<string>`count(*)::text` })
+      .from(retryRequests)
+      .where(eq(retryRequests.execution_id, executionId));
+    expect(Number(requests?.count)).toBe(1);
   });
 
   it('keeps a published version unchanged after a draft edit', async () => {
@@ -464,12 +503,12 @@ describe('execution pipeline', () => {
     });
     expect(update.statusCode).toBe(200);
 
-    const db = getPool();
-    const version = await db.query<{ definition: Record<string, unknown> }>(
-      'SELECT definition FROM workflow_versions WHERE id = $1',
-      [workflow.versionId],
-    );
-    const steps = version.rows[0]?.definition.steps as Record<string, unknown>[];
+    const db = getDb();
+    const [version] = await db
+      .select({ definition: workflowVersions.definition })
+      .from(workflowVersions)
+      .where(eq(workflowVersions.id, workflow.versionId));
+    const steps = version?.definition.steps as Record<string, unknown>[];
     expect(steps[0]!.name).toBe('Save contact');
   });
 
@@ -581,30 +620,32 @@ describe('execution pipeline', () => {
     const signatureHeader = body.request.headers['x-s9-signature'];
     expect(signatureHeader).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
 
-    const db = getPool();
-    const endpoint = await db.query<{ encrypted_secret: { ciphertext: string; iv: string; authTag: string; keyId: string; version: 1 } }>(
-      'SELECT encrypted_secret FROM webhook_endpoints WHERE workflow_id = $1',
-      [workflow.id],
-    );
-    const secret = decrypt(endpoint.rows[0]!.encrypted_secret);
+    const db = getDb();
+    const [endpoint] = await db
+      .select({ encrypted_secret: webhookEndpoints.encrypted_secret })
+      .from(webhookEndpoints)
+      .where(eq(webhookEndpoints.workflow_id, workflow.id));
+    const secret = decrypt(endpoint!.encrypted_secret!);
     const expected = signWebhookPayload(secret, body.request.timestamp, body.request.body);
     expect(body.request.signature).toBe(expected);
 
     // The delivery was accepted and queued. No worker runs in the test, so the
     // continuation is driven by hand.
-    const execution = await db.query<{ status: string }>('SELECT status FROM executions WHERE id = $1', [
-      body.executionId,
-    ]);
-    expect(execution.rows[0]?.status).toBe('queued');
+    const [execution] = await db
+      .select({ status: executions.status })
+      .from(executions)
+      .where(eq(executions.id, body.executionId!));
+    expect(execution?.status).toBe('queued');
 
     await publishOutbox();
     const result = await runContinuation(body.executionId!);
     expect(result).toBe('completed');
 
-    const finished = await db.query<{ status: string }>('SELECT status FROM executions WHERE id = $1', [
-      body.executionId,
-    ]);
-    expect(finished.rows[0]?.status).toBe('succeeded');
+    const [finished] = await db
+      .select({ status: executions.status })
+      .from(executions)
+      .where(eq(executions.id, body.executionId!));
+    expect(finished?.status).toBe('succeeded');
 
     await selfServer.stop();
     delete process.env.API_SELF_URL;
@@ -621,21 +662,21 @@ describe('execution pipeline', () => {
     });
     const { executionId } = run.json() as { executionId: string };
 
-    const db = getPool();
-    const outbox = await db.query<{ status: string; attempt_count: number }>(
-      'SELECT status, attempt_count FROM outbox_events WHERE aggregate_id = $1',
-      [executionId],
-    );
-    expect(outbox.rows[0]?.status).toBe('pending');
+    const db = getDb();
+    const [outbox] = await db
+      .select({ status: outboxEvents.status, attempt_count: outboxEvents.attempt_count })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.aggregate_id, executionId));
+    expect(outbox?.status).toBe('pending');
 
     const published = await publishOutbox();
     expect(published).toBeGreaterThan(0);
 
-    const after = await db.query<{ status: string }>(
-      'SELECT status FROM outbox_events WHERE aggregate_id = $1',
-      [executionId],
-    );
-    expect(after.rows[0]?.status).toBe('published');
+    const [after] = await db
+      .select({ status: outboxEvents.status })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.aggregate_id, executionId));
+    expect(after?.status).toBe('published');
   });
 });
 
