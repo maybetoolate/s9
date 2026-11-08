@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { signWebhookPayload } from '@s9/core';
 import {
   buildServer,
   createPublishedWorkflow,
   createSession,
+  inject,
   publishOutbox,
   resetData,
   runContinuation,
@@ -93,7 +94,7 @@ describe('execution pipeline', () => {
     const timestamp = Date.now();
     const signature = signWebhookPayload(workflow.webhookSecret!, timestamp, body);
 
-    const first = await context.app.inject({
+    const first = await inject(context.app, {
       method: 'POST',
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
@@ -109,7 +110,7 @@ describe('execution pipeline', () => {
     expect(firstBody.accepted).toBe(true);
 
     // The same delivery inside the deduplication window creates nothing.
-    const second = await context.app.inject({
+    const second = await inject(context.app, {
       method: 'POST',
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
@@ -136,7 +137,7 @@ describe('execution pipeline', () => {
   it('rejects an unauthenticated webhook without enqueueing work', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'POST',
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: { 'content-type': 'application/json', 'idempotency-key': 'evt-bad' },
@@ -157,7 +158,7 @@ describe('execution pipeline', () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
     const timestamp = Date.now();
 
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'POST',
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
@@ -172,7 +173,7 @@ describe('execution pipeline', () => {
 
   it('rejects the intake of a paused workflow with 409', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
-    const pause = await context.app.inject({
+    const pause = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/pause`,
       headers: { cookie: context.cookie },
@@ -183,7 +184,7 @@ describe('execution pipeline', () => {
     const timestamp = Date.now();
     const signature = signWebhookPayload(workflow.webhookSecret!, timestamp, body);
 
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'POST',
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
@@ -199,7 +200,7 @@ describe('execution pipeline', () => {
   it('runs the steps in order and records the outputs', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -234,7 +235,7 @@ describe('execution pipeline', () => {
     server.failNext(1, 503);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -270,7 +271,7 @@ describe('execution pipeline', () => {
     server.failNext(10, 400);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -296,7 +297,7 @@ describe('execution pipeline', () => {
     server.hangNext(1);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -329,7 +330,7 @@ describe('execution pipeline', () => {
     server.hangNext(1);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -339,7 +340,7 @@ describe('execution pipeline', () => {
     await publishOutbox();
     await runContinuation(executionId);
 
-    const resolve = await context.app.inject({
+    const resolve = await inject(context.app, {
       method: 'POST',
       url: `/api/executions/${executionId}/steps/call_provider/resolve`,
       headers: { cookie: context.cookie },
@@ -371,7 +372,7 @@ describe('execution pipeline', () => {
     server.failNext(10, 400);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -385,7 +386,7 @@ describe('execution pipeline', () => {
     const contactsBefore = await db.query<{ count: string }>('SELECT count(*)::text AS count FROM contacts');
     expect(Number(contactsBefore.rows[0]?.count)).toBe(1);
 
-    const retry = await context.app.inject({
+    const retry = await inject(context.app, {
       method: 'POST',
       url: `/api/executions/${executionId}/retry`,
       headers: { cookie: context.cookie },
@@ -405,7 +406,7 @@ describe('execution pipeline', () => {
     server.failNext(10, 400);
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -417,13 +418,13 @@ describe('execution pipeline', () => {
 
     const sharedKey = `same-recovery-${Date.now()}-${Math.random()}`;
     const [first, second] = await Promise.all([
-      context.app.inject({
+      inject(context.app, {
         method: 'POST',
         url: `/api/executions/${executionId}/retry`,
         headers: { cookie: context.cookie },
         payload: { stepKey: 'call_provider', idempotencyKey: sharedKey },
       }),
-      context.app.inject({
+      inject(context.app, {
         method: 'POST',
         url: `/api/executions/${executionId}/retry`,
         headers: { cookie: context.cookie },
@@ -445,7 +446,7 @@ describe('execution pipeline', () => {
   it('keeps a published version unchanged after a draft edit', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
 
-    const detail = await context.app.inject({
+    const detail = await inject(context.app, {
       method: 'GET',
       url: `/api/workflows/${workflow.id}`,
       headers: { cookie: context.cookie },
@@ -455,7 +456,7 @@ describe('execution pipeline', () => {
     const definition = structuredClone(body.draft.definition);
     (definition.steps as Record<string, unknown>[])[0]!.name = 'Save contact (edited)';
 
-    const update = await context.app.inject({
+    const update = await inject(context.app, {
       method: 'PUT',
       url: `/api/workflows/${workflow.id}/draft`,
       headers: { cookie: context.cookie },
@@ -474,7 +475,7 @@ describe('execution pipeline', () => {
 
   it('rejects a stale draft revision', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
-    const detail = await context.app.inject({
+    const detail = await inject(context.app, {
       method: 'GET',
       url: `/api/workflows/${workflow.id}`,
       headers: { cookie: context.cookie },
@@ -482,7 +483,7 @@ describe('execution pipeline', () => {
     const body = detail.json() as { draft: { revision: number; definition: Record<string, unknown> } };
 
     // A first update succeeds and moves the revision forward.
-    const firstUpdate = await context.app.inject({
+    const firstUpdate = await inject(context.app, {
       method: 'PUT',
       url: `/api/workflows/${workflow.id}/draft`,
       headers: { cookie: context.cookie },
@@ -491,7 +492,7 @@ describe('execution pipeline', () => {
     expect(firstUpdate.statusCode).toBe(200);
 
     // The same (now stale) revision is rejected instead of overwriting.
-    const update = await context.app.inject({
+    const update = await inject(context.app, {
       method: 'PUT',
       url: `/api/workflows/${workflow.id}/draft`,
       headers: { cookie: context.cookie },
@@ -509,7 +510,7 @@ describe('execution pipeline', () => {
       `other-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
     );
 
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'GET',
       url: `/api/workflows/${workflow.id}`,
       headers: { cookie: other.cookie },
@@ -520,7 +521,7 @@ describe('execution pipeline', () => {
 
   it('does not let a user of another workspace read the execution', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },
@@ -532,7 +533,7 @@ describe('execution pipeline', () => {
       context.app,
       `other2-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
     );
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'GET',
       url: `/api/executions/${executionId}`,
       headers: { cookie: other.cookie },
@@ -546,11 +547,16 @@ describe('execution pipeline', () => {
 
     // The test delivery is sent over a real socket to this API process, so
     // the test app has to listen for real.
-    const address = await context.app.listen({ port: 0, host: '127.0.0.1' });
-    process.env.API_SELF_URL = address;
+    const { serveHttp } = await import('../../src/lib/serve.js');
+    const selfServer = await serveHttp({
+      fetch: context.app.fetch,
+      port: 0,
+      hostname: '127.0.0.1',
+    });
+    process.env.API_SELF_URL = `http://127.0.0.1:${selfServer.port}`;
     resetEnvCache();
 
-    const response = await context.app.inject({
+    const response = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/webhook/test-delivery`,
       headers: { cookie: context.cookie },
@@ -600,14 +606,14 @@ describe('execution pipeline', () => {
     ]);
     expect(finished.rows[0]?.status).toBe('succeeded');
 
-    await context.app.close();
+    await selfServer.stop();
     delete process.env.API_SELF_URL;
     resetEnvCache();
   });
 
   it('publishes queued work through the outbox', async () => {
     const workflow = await createPublishedWorkflow(context, contactFormDefinition(server.url));
-    const run = await context.app.inject({
+    const run = await inject(context.app, {
       method: 'POST',
       url: `/api/workflows/${workflow.id}/run`,
       headers: { cookie: context.cookie },

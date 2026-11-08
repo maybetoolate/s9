@@ -5,7 +5,7 @@
     "paths": {
       "@s9/core": ["../core/src/index.ts"]
     },
-    "types": ["node"],
+    "types": ["node", "bun-types"],
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

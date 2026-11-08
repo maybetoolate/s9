@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { FastifyInstance } from 'fastify';
-import { buildServer, closePool, createSession, resetData } from './helpers.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import type { App } from '../../src/api/context.js';
+import { buildServer, closePool, createSession, inject, resetData } from './helpers.js';
 
 /**
  * The service boundary.
@@ -11,14 +11,13 @@ import { buildServer, closePool, createSession, resetData } from './helpers.js';
  * the test setup on an ephemeral port).
  */
 describe('auth service boundary', () => {
-  let app: FastifyInstance;
+  let app: App;
 
   beforeAll(async () => {
     app = await buildServer();
   });
 
   afterAll(async () => {
-    await app.close();
     await closePool();
   });
 
@@ -32,7 +31,7 @@ describe('auth service boundary', () => {
       `profile-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`,
     );
 
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/api/me',
       headers: { cookie: context.cookie },
@@ -46,12 +45,12 @@ describe('auth service boundary', () => {
   });
 
   it('rejects /api/me without a session', async () => {
-    const response = await app.inject({ method: 'GET', url: '/api/me' });
+    const response = await inject(app, { method: 'GET', url: '/api/me' });
     expect(response.statusCode).toBe(401);
   });
 
   it('rejects a session cookie that the auth service does not know', async () => {
-    const response = await app.inject({
+    const response = await inject(app, {
       method: 'GET',
       url: '/api/me',
       headers: { cookie: 's9.session_token=not-a-real-session' },

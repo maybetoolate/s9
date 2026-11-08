@@ -1,3 +1,6 @@
+# The runtime image is selectable at build time; Bun is the default.
+ARG RUNTIME_IMAGE=oven/bun:1-alpine
+
 # The worker and the scheduler share the same image: only the command differs.
 FROM node:22-alpine AS build
 
@@ -17,9 +20,12 @@ COPY packages/server packages/server
 
 RUN pnpm --filter @s9/core build && pnpm --filter @s9/server build
 
-FROM node:22-alpine AS runtime
+# Runtime stage: the Hono worker runs on Bun by default. Pass
+# RUNTIME_IMAGE=node:22-alpine and RUNTIME_BIN=node to run on Node.js instead.
+FROM ${RUNTIME_IMAGE} AS runtime
+ARG RUNTIME_BIN=bun
+ENV RUNTIME_BIN=${RUNTIME_BIN}
 
-RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -34,4 +40,4 @@ COPY --from=build /app/packages/core/node_modules packages/core/node_modules
 COPY --from=build /app/packages/server/dist packages/server/dist
 COPY --from=build /app/packages/server/migrations packages/server/migrations
 
-CMD ["node", "packages/server/dist/main-worker.js"]
+CMD ["sh", "-c", "exec \"$RUNTIME_BIN\" packages/server/dist/main-worker.js"]

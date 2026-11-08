@@ -35,7 +35,7 @@ retry, because a timeout does not prove the remote operation failed.
 
 ## Quick start
 
-Requirements: Docker (for PostgreSQL and Redis) and Node.js 20.11+.
+Requirements: Docker (for PostgreSQL and Redis), Node.js 20.11+ for the web app and tooling, and either Bun 1.1+ or Node.js 22+ for the API, auth, worker and scheduler. Bun is the default runtime; the Docker images and dev scripts use it.
 
 ```bash
 # 1. Configure the environment
@@ -59,6 +59,26 @@ pnpm dev
 The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, the auth service on port `4001`
 (internal; not published by Compose), and the mail catcher on <http://localhost:8025>.
 
+### Node.js runtime
+
+The server processes are Hono applications, so they run on Node.js as well as Bun. Build the server once and start the
+processes with the `:node` scripts:
+
+```bash
+pnpm --filter @s9/server build
+pnpm --filter @s9/server start:api:node
+pnpm --filter @s9/server start:auth:node
+pnpm --filter @s9/server start:worker:node
+pnpm --filter @s9/server start:scheduler:node
+```
+
+The runtime is detected at startup. Docker images keep Bun as the default; to build them for Node.js instead, set
+`RUNTIME_IMAGE=node:22-alpine` and `RUNTIME_BIN=node` when running Compose, for example:
+
+```bash
+RUNTIME_IMAGE=node:22-alpine RUNTIME_BIN=node docker compose up --build -d
+```
+
 Sign in with the seeded operator:
 
 ```
@@ -73,7 +93,7 @@ docker compose up --build -d
 
 # Seed inside the container network: the demo workflow stores the address of
 # the demo sink, and the worker has to be able to reach it.
-docker compose exec api node packages/server/dist/cli-seed.js
+docker compose exec api bun packages/server/dist/cli-seed.js
 ```
 
 This starts `web`, `api`, `auth`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit`, `sink` and `dozzle`. The API and

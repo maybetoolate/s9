@@ -22,6 +22,23 @@ pnpm dev                                            # auth, api, worker, schedul
 
 Sign in with `operator@s9.local` / `s9-demo-password`.
 
+### Runtime
+
+The API and auth service are Hono applications and, like the worker and scheduler, run on both Bun and Node.js. Bun is the default. To run the compiled
+output on Node.js, build the server and use the `:node` scripts:
+
+```bash
+pnpm --filter @s9/server build
+pnpm --filter @s9/server start:api:node
+pnpm --filter @s9/server start:auth:node
+pnpm --filter @s9/server start:worker:node
+pnpm --filter @s9/server start:scheduler:node
+```
+
+`RUNTIME=node ./scripts/start-local.sh` starts the same processes from `dist` on Node.js. Compose accepts
+`RUNTIME_IMAGE` and `RUNTIME_BIN` build arguments/commands, so
+`RUNTIME_IMAGE=node:22-alpine RUNTIME_BIN=node docker compose up --build -d` builds Node.js images.
+
 ### Useful scripts
 
 | Command | Purpose |
@@ -29,7 +46,7 @@ Sign in with `operator@s9.local` / `s9-demo-password`.
 | `pnpm dev` | Start the auth service, the API, the worker, the scheduler and the web app |
 | `pnpm db:migrate` | Apply the pending migrations |
 | `pnpm db:seed` | Create the demo workspace, the operator and the demo workflow |
-| `docker compose exec api node packages/server/dist/cli-seed.js` | The same, inside the container network |
+| `docker compose exec api bun packages/server/dist/cli-seed.js` | The same, inside the container network |
 | `pnpm db:reset` | Drop and recreate the public schema |
 | `pnpm test` | The unit and integration suites |
 | `pnpm typecheck` | Typecheck every package |

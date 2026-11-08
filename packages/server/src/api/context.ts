@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { Context, Hono } from 'hono';
 import { validateSession, type SessionInfo } from '../auth/client.js';
 import { findMembership, listWorkspacesForUser } from '../db/repo.js';
 import { getPool } from '../db/pool.js';
@@ -21,12 +21,16 @@ export interface RequestContext {
   role: Role;
 }
 
-declare module 'fastify' {
-  interface FastifyRequest {
+/** Per-request values shared through the Hono context. */
+export interface AppEnv {
+  Variables: {
+    requestId: string;
     context?: RequestContext;
-    rawBody?: Buffer;
-  }
+  };
 }
+
+export type App = Hono<AppEnv>;
+export type AppContext = Context<AppEnv>;
 
 /** Role capabilities. */
 export const ROLE_CAPABILITIES: Record<Role, string[]> = {
@@ -39,8 +43,8 @@ export function can(role: Role, capability: string): boolean {
   return ROLE_CAPABILITIES[role].includes(capability);
 }
 
-export async function getSession(request: FastifyRequest): Promise<SessionInfo | null> {
-  return validateSession(request.headers.cookie);
+export async function getSession(c: AppContext): Promise<SessionInfo | null> {
+  return validateSession(c.req.header('cookie'));
 }
 
 /**
@@ -50,11 +54,10 @@ export async function getSession(request: FastifyRequest): Promise<SessionInfo |
  * workspace id.
  */
 export async function requireContext(
-  request: FastifyRequest,
-  _reply: FastifyReply,
+  c: AppContext,
   options: { capabilities?: string[] } = {},
 ): Promise<RequestContext> {
-  const session = await getSession(request);
+  const session = await getSession(c);
   if (!session) throw ApiError.unauthorized();
 
   const db = getPool();
@@ -79,12 +82,13 @@ export async function requireContext(
     workspaceName: first.name,
     role,
   };
-  request.context = context;
+  c.set('context', context);
   return context;
 }
 
 /** Reads the context that a pre-handler already resolved. */
-export function context(request: FastifyRequest): RequestContext {
-  if (!request.context) throw ApiError.unauthorized();
-  return request.context;
+export function context(c: AppContext): RequestContext {
+  const resolved = c.get('context');
+  if (!resolved) throw ApiError.unauthorized();
+  return resolved;
 }

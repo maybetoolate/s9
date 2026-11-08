@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { App } from '../context.js';
 import { randomUUID } from 'node:crypto';
 import {
   generateWebhookSecret,
@@ -31,8 +31,9 @@ import {
   upsertSchedule,
 } from '../../db/repo.js';
 import { getPool, withTransaction } from '../../db/pool.js';
-import { context, requireContext } from '../context.js';
-import { ApiError, paginated, parsePagination } from '../http.js';
+import { requireContext } from '../context.js';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { ApiError, jsonRoute, paginated, parsePagination, readJson } from '../http.js';
 import { toDraftDto, toScheduleDto, toVersionDto, toWebhookEndpointDto, toWorkflowSummary } from '../mappers.js';
 import { createExecution } from '../../engine/execution-service.js';
 import { computeNextRun } from '../../engine/scheduler.js';
@@ -63,10 +64,10 @@ const RunBody = z.object({
   idempotencyKey: z.string().min(8).max(200).optional(),
 });
 
-export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/workflows', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const query = request.query as Record<string, unknown>;
+export async function registerWorkflowRoutes(app: App): Promise<void> {
+  app.get('/api/workflows', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const query = c.req.query();
     const pagination = parsePagination(query);
 
     const { rows, total } = await listWorkflows(getPool(), ctx.workspaceId, {
@@ -78,11 +79,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
     });
 
     return paginated(rows.map(toWorkflowSummary), total, pagination);
-  });
+  }));
 
-  app.post('/api/workflows', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['write'] });
-    const body = CreateWorkflowBody.parse(request.body ?? {});
+  app.post('/api/workflows', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['write'] });
+    const body = CreateWorkflowBody.parse(await readJson(c));
 
     const definition = buildInitialDefinition(body.triggerType, body.definition);
     const issues = validateDefinition(definition);
@@ -100,7 +101,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       }),
     );
 
-    reply.status(201);
+    c.status(201);
     return {
       id: workflow.id,
       name: workflow.name,
@@ -108,11 +109,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       triggerType: workflow.trigger_type,
       draft: definition,
     };
-  });
+  }));
 
-  app.get('/api/workflows/:id', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.get('/api/workflows/:id', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -144,14 +145,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       webhookEndpoint: endpoint ? toWebhookEndpointDto(endpoint, env().API_PUBLIC_URL) : null,
       schedule: schedule ? toScheduleDto(schedule) : null,
     };
-  });
+  }));
 
-  app.patch('/api/workflows/:id', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['write'] });
-    const { id } = request.params as { id: string };
+  app.patch('/api/workflows/:id', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['write'] });
+    const { id } = c.req.param() as { id: string };
     const body = z
       .object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2_000).nullable().optional() })
-      .parse(request.body ?? {});
+      .parse(await readJson(c));
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -167,12 +168,12 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
     );
 
     return { ok: true };
-  });
+  }));
 
-  app.put('/api/workflows/:id/draft', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['write'] });
-    const { id } = request.params as { id: string };
-    const body = UpdateDraftBody.parse(request.body ?? {});
+  app.put('/api/workflows/:id/draft', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['write'] });
+    const { id } = c.req.param() as { id: string };
+    const body = UpdateDraftBody.parse(await readJson(c));
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -192,11 +193,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
     // silently overwriting another editor's work.
     const draft = await updateDraft(db, id, parsed.data, body.revision);
     return { draft: toDraftDto(draft) };
-  });
+  }));
 
-  app.post('/api/workflows/:id/validate', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/validate', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const draft = await getDraft(db, id);
@@ -204,11 +205,11 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
 
     const issues = validateDefinition(draft.definition);
     return { valid: isPublishable(issues), issues };
-  });
+  }));
 
-  app.post('/api/workflows/:id/publish', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/publish', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -290,7 +291,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       webhookSecret: result.webhookSecret,
       webhookEndpoint: endpoint ? toWebhookEndpointDto(endpoint, env().API_PUBLIC_URL) : null,
     };
-  });
+  }));
 
   /**
    * Sends a signed test delivery to the workflow's own webhook endpoint.
@@ -300,12 +301,12 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
    * accepts the delivery and open the resulting execution. The delivery goes
    * through the real intake path, so the workflow runs for real.
    */
-  app.post('/api/workflows/:id/webhook/test-delivery', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/webhook/test-delivery', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['retry'] });
+    const { id } = c.req.param() as { id: string };
     const body = z
       .object({ payload: z.record(z.string(), z.unknown()).optional() })
-      .parse(request.body ?? {});
+      .parse(await readJson(c));
 
     const db = getPool();
     const endpoint = await getWebhookEndpointByWorkflow(db, id);
@@ -366,7 +367,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       });
     });
 
-    reply.status(upstream.status);
+    c.status(upstream.status as ContentfulStatusCode);
     return {
       status: upstream.status,
       accepted: upstream.status === 202,
@@ -386,18 +387,18 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
         signature,
       },
     };
-  });
+  }));
 
-  app.post('/api/workflows/:id/pause', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/pause', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { id } = c.req.param() as { id: string };
     await changeStatus(id, ctx, 'paused');
     return { status: 'paused' };
-  });
+  }));
 
-  app.post('/api/workflows/:id/resume', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/resume', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -416,18 +417,18 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       ]);
     }
     return { status: 'published' };
-  });
+  }));
 
-  app.post('/api/workflows/:id/archive', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/archive', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { id } = c.req.param() as { id: string };
     await changeStatus(id, ctx, 'archived');
     return { status: 'archived' };
-  });
+  }));
 
-  app.post('/api/workflows/:id/duplicate', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['write'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/duplicate', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['write'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -445,20 +446,20 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       }),
     );
 
-    reply.status(201);
+    c.status(201);
     return { id: copy.id, name: copy.name };
-  });
+  }));
 
-  app.get('/api/workflows/:id/versions', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.get('/api/workflows/:id/versions', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
     const versions = await listVersions(getPool(), id);
     return { data: versions.map(toVersionDto) };
-  });
+  }));
 
-  app.get('/api/workflow-versions/:id', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.get('/api/workflow-versions/:id', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
     const version = await getVersion(getPool(), id);
     if (!version) throw ApiError.notFound('workflow version not found');
 
@@ -466,20 +467,20 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
     if (!workflow) throw ApiError.notFound('workflow version not found');
 
     return toVersionDto(version);
-  });
+  }));
 
-  app.get('/api/workflows/:id/webhook', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.get('/api/workflows/:id/webhook', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
     const endpoint = await getWebhookEndpointByWorkflow(getPool(), id);
     if (!endpoint) throw ApiError.notFound('the workflow has no webhook endpoint');
     // The secret is never returned again.
     return toWebhookEndpointDto(endpoint, env().API_PUBLIC_URL);
-  });
+  }));
 
-  app.post('/api/workflows/:id/webhook/rotate', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['rotate_credentials'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/workflows/:id/webhook/rotate', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['rotate_credentials'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const endpoint = await getWebhookEndpointByWorkflow(db, id);
@@ -517,12 +518,12 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
         env().API_PUBLIC_URL,
       ),
     };
-  });
+  }));
 
-  app.post('/api/workflows/:id/run', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { id } = request.params as { id: string };
-    const body = RunBody.parse(request.body ?? {});
+  app.post('/api/workflows/:id/run', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { id } = c.req.param() as { id: string };
+    const body = RunBody.parse(await readJson(c));
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -536,7 +537,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
 
     const idempotencyKey =
       body.idempotencyKey ??
-      request.headers['idempotency-key']?.toString() ??
+      c.req.header('idempotency-key') ??
       `manual:${workflow.id}:${randomUUID()}`;
 
     const queued = await countRunningExecutions(db, workflow.id);
@@ -554,14 +555,14 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       actorId: ctx.userId,
     });
 
-    reply.status(result.duplicate ? 200 : 202);
+    c.status(result.duplicate ? 200 : 202);
     return { executionId: result.id, duplicate: result.duplicate, status: 'queued' };
-  });
+  }));
 
-  app.post('/api/workflows/:id/test', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['write'] });
-    const { id } = request.params as { id: string };
-    const body = RunBody.parse(request.body ?? {});
+  app.post('/api/workflows/:id/test', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['write'] });
+    const { id } = c.req.param() as { id: string };
+    const body = RunBody.parse(await readJson(c));
 
     const db = getPool();
     const workflow = await getWorkflow(db, ctx.workspaceId, id);
@@ -590,9 +591,9 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
       draftRevision: draft.revision,
     });
 
-    reply.status(202);
+    c.status(202);
     return { executionId: result.id, duplicate: false, status: 'queued', isTest: true };
-  });
+  }));
 }
 
 async function changeStatus(

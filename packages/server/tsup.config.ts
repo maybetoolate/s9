@@ -16,5 +16,5 @@ export default defineConfig({
   clean: true,
   splitting: false,
   dts: false,
-  banner: { js: "#!/usr/bin/env node" },
+  banner: { js: "#!/usr/bin/env bun" },
 });

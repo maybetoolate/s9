@@ -11,7 +11,7 @@ system of record and Redis/BullMQ as the delivery mechanism. Deployment stays si
                                                  │ REST (JSON)
                                                  ▼
                        ┌───────────────────────────────────────────────┐
-   external sender ───▶│  Node.js API (packages/server)                │
+   external sender ───▶│  Hono API on Bun or Node (packages/server)    │
    (webhook)           │  auth proxy · CRUD · validation · publish ·   │
                        │  intake                                       │
                        └───────┬───────────────────────────┬───────────┘
@@ -49,7 +49,7 @@ system of record and Redis/BullMQ as the delivery mechanism. Deployment stays si
 | Component | Responsibilities | Must not do |
 | --- | --- | --- |
 | Next.js web app | Workflow editor, dashboard, execution views | Execute workflow steps in the browser |
-| Node.js API | Auth proxy, CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
+| Hono API (Bun or Node) | Auth proxy, CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
 | Auth service | Own the Better-Auth tables, sign sessions, issue and verify OAuth2 service tokens | Serve workflow traffic or expose the session tables to other processes |
 | PostgreSQL | Durable definitions, versions, executions, attempts, audit events | Rely on queue state as the only record |
 | Redis + BullMQ | Deliver execution continuations, delayed retries, worker concurrency | Become the source of truth for business state |

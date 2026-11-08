@@ -1,9 +1,8 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { AddressInfo } from 'node:net';
-import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
-import { afterAll, beforeAll } from 'vitest';
+import { afterAll, beforeAll } from 'bun:test';
+import type { RunningServer } from '../../src/lib/serve.js';
 
 /**
  * Test environment.
@@ -58,27 +57,27 @@ process.env.WEB_PUBLIC_URL = process.env.WEB_PUBLIC_URL ?? 'http://localhost:300
 const { runMigrations } = await import('../../src/db/migrate.js');
 await runMigrations({ log: false });
 
-let authApp: FastifyInstance | undefined;
+let authServer: RunningServer | undefined;
 let authPool: Pool | undefined;
 
 beforeAll(async () => {
   // Start the auth service on a random port and point the API at it.
   const { buildAuthServer } = await import('../../src/auth/server.js');
+  const { serveHttp } = await import('../../src/lib/serve.js');
   const { authPool: pool } = await import('../../src/api/auth.js');
   const { resetEnvCache } = await import('../../src/config/env.js');
   const { resetAuthClientCache } = await import('../../src/auth/client.js');
 
   authPool = pool;
-  authApp = await buildAuthServer();
-  await authApp.listen({ port: 0, host: '127.0.0.1' });
+  const authApp = await buildAuthServer();
+  authServer = await serveHttp({ fetch: authApp.fetch, port: 0, hostname: '127.0.0.1' });
 
-  const address = authApp.server.address() as AddressInfo;
-  process.env.AUTH_INTERNAL_URL = `http://127.0.0.1:${address.port}`;
+  process.env.AUTH_INTERNAL_URL = `http://127.0.0.1:${authServer.port}`;
   resetEnvCache();
   resetAuthClientCache();
 });
 
 afterAll(async () => {
-  await authApp?.close().catch(() => undefined);
+  await authServer?.stop().catch(() => undefined);
   await authPool?.end().catch(() => undefined);
 });

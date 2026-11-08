@@ -1,8 +1,9 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
-import { logger, loggerOptions } from '../lib/logger.js';
-import { ApiError, sendError } from './http.js';
+import { logger } from '../lib/logger.js';
+import { ApiError, relayResponse, sendError } from './http.js';
 import { registerWorkflowRoutes } from './routes/workflows.js';
 import { registerExecutionRoutes } from './routes/executions.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
@@ -10,6 +11,8 @@ import { registerResourceRoutes } from './routes/resources.js';
 import { getPool, closePool } from '../db/pool.js';
 import { RepositoryError } from '../db/repo.js';
 import { getRedis, closeRedis } from '../queue/connection.js';
+import type { App, AppEnv } from './context.js';
+import { serveHttp } from '../lib/serve.js';
 
 /**
  * The HTTP API.
@@ -18,94 +21,66 @@ import { getRedis, closeRedis } from '../queue/connection.js';
  * and run requests. It never performs long running workflow work inline.
  */
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    rawBody?: Buffer;
-  }
-}
+const MAX_BODY_BYTES = 1024 * 1024;
 
-export async function buildServer(): Promise<FastifyInstance> {
+export async function buildServer(): Promise<App> {
   const config = env();
 
-  const app = Fastify({
-    logger: loggerOptions(),
-    bodyLimit: 1024 * 1024,
-    trustProxy: true,
-  });
-
-  // Keep the raw body so the webhook signature can be verified over exactly
-  // the bytes that were received.
-  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    const text = (body as Buffer).toString('utf8');
-    if (text.trim().length === 0) {
-      done(null, {});
-      return;
-    }
-    try {
-      done(null, JSON.parse(text));
-    } catch {
-      done(new ApiError(400, 'invalid_json', 'the request body is not valid JSON'), undefined);
-    }
-  });
-
-  app.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    done(null, (body as Buffer).toString('utf8'));
-  });
-
-  // The auth proxy forwards the body untouched, and the auth service decides
-  // how to interpret it. Without a catch-all parser Fastify would reject a
-  // form-encoded auth request before the proxy ever sees it.
-  app.addContentTypeParser('*', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    done(null, body);
-  });
+  const app = new Hono<AppEnv>();
 
   // A correlation id is returned for support and log correlation.
-  app.addHook('onRequest', async (request: FastifyRequest) => {
-    const incoming = request.headers['x-request-id'];
-    const requestId = typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
-    request.id = requestId;
-    (request as FastifyRequest & { requestId?: string }).requestId = requestId;
+  app.use('*', async (c, next) => {
+    const incoming = c.req.header('x-request-id');
+    c.set('requestId', incoming && incoming.length > 0 ? incoming : randomUUID());
+    await next();
   });
 
-  app.setErrorHandler((error, request: FastifyRequest, reply: FastifyReply) => {
+  app.use(
+    '*',
+    bodyLimit({
+      maxSize: MAX_BODY_BYTES,
+      onError: (c) =>
+        sendError(c, ApiError.payloadTooLarge('the request body is too large'), c.get('requestId')),
+    }),
+  );
+
+  app.onError((error, c) => {
+    const requestId = c.get('requestId');
     if (error instanceof ApiError) {
-      return sendError(reply, error, request.id);
+      return sendError(c, error, requestId);
     }
     if (error instanceof RepositoryError) {
-      return sendError(
-        reply,
-        new ApiError(error.statusCode, error.code, error.message),
-        request.id,
-      );
+      return sendError(c, new ApiError(error.statusCode, error.code, error.message), requestId);
     }
     const errorName = (error as { name?: string }).name;
     if (errorName === 'ZodError') {
       return sendError(
-        reply,
+        c,
         ApiError.badRequest('the request body is not valid', 'invalid_body', (error as { issues?: unknown }).issues),
-        request.id,
+        requestId,
       );
     }
     const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
     if (statusCode < 500) {
       const message = (error as { message?: string }).message ?? 'the request was rejected';
-      return sendError(reply, new ApiError(statusCode, 'request_error', message), request.id);
+      return sendError(c, new ApiError(statusCode, 'request_error', message), requestId);
     }
-    request.log.error({ err: error }, 'the request failed');
-    return sendError(reply, error, request.id);
+    logger.error({ err: error }, 'the request failed');
+    return sendError(c, error, requestId);
   });
 
-  app.setNotFoundHandler((request, reply) => {
-    return sendError(reply, ApiError.notFound(`no route for ${request.method} ${request.url}`), request.id);
-  });
+  app.notFound((c) =>
+    sendError(
+      c,
+      ApiError.notFound(`no route for ${c.req.method} ${c.req.path}`),
+      c.get('requestId'),
+    ),
+  );
 
   // ------------------------------------------------------------- health
-  app.get('/health', async () => ({ status: 'ok', service: 's9-api' }));
+  app.get('/health', (c) => c.json({ status: 'ok', service: 's9-api' }));
 
-  app.get('/health/ready', async (_request, reply) => {
+  app.get('/health/ready', async (c) => {
     const checks: Record<string, string> = {};
     let healthy = true;
 
@@ -141,37 +116,33 @@ export async function buildServer(): Promise<FastifyInstance> {
       logger.error({ err: error }, 'the auth health check failed');
     }
 
-    reply.status(healthy ? 200 : 503);
-    return { status: healthy ? 'ready' : 'degraded', checks };
+    return c.json({ status: healthy ? 'ready' : 'degraded', checks }, healthy ? 200 : 503);
   });
 
   // -------------------------------------------------------------- auth
   // Authentication lives in its own service. The API keeps the public
   // `/api/auth/*` surface and proxies it so existing clients and the web app
   // do not need to know the internal address.
-  app.all('/api/auth/*', async (request, reply) => {
-    const target = new URL(request.url, config.AUTH_INTERNAL_URL);
+  app.all('/api/auth/*', async (c) => {
+    const url = new URL(c.req.url);
+    const target = new URL(url.pathname + url.search, config.AUTH_INTERNAL_URL);
 
     const headers = new Headers();
-    for (const [key, value] of Object.entries(request.headers)) {
-      if (value === undefined) continue;
+    for (const [key, value] of c.req.raw.headers) {
       // Hop-by-hop headers are owned by the outbound request.
       if (key === 'host' || key === 'connection' || key === 'content-length') continue;
-      if (Array.isArray(value)) {
-        for (const item of value) headers.append(key, item);
-      } else {
-        headers.set(key, String(value));
-      }
+      headers.append(key, value);
     }
 
-    const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+    const hasBody = c.req.method !== 'GET' && c.req.method !== 'HEAD';
+    const body = hasBody ? await c.req.arrayBuffer() : undefined;
 
     let upstream: Response;
     try {
       upstream = await fetch(target, {
-        method: request.method,
+        method: c.req.method,
         headers,
-        ...(hasBody ? { body: request.rawBody ?? Buffer.alloc(0) } : {}),
+        ...(body !== undefined ? { body } : {}),
         redirect: 'manual',
       });
     } catch (error) {
@@ -182,15 +153,7 @@ export async function buildServer(): Promise<FastifyInstance> {
       );
     }
 
-    reply.status(upstream.status);
-    upstream.headers.forEach((value, key) => {
-      if (key.toLowerCase() === 'set-cookie') return;
-      reply.header(key, value);
-    });
-    const setCookie = upstream.headers.getSetCookie?.() ?? [];
-    if (setCookie.length > 0) reply.header('set-cookie', setCookie);
-
-    return reply.send(Buffer.from(await upstream.arrayBuffer()));
+    return relayResponse(upstream);
   });
 
   // ----------------------------------------------------------- routes
@@ -206,9 +169,15 @@ export async function startApi(): Promise<void> {
   const config = env();
   const app = await buildServer();
 
+  const server = await serveHttp({
+    fetch: app.fetch,
+    port: config.API_PORT,
+    hostname: config.API_HOST,
+  });
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'the api is shutting down');
-    await app.close().catch(() => undefined);
+    await server.stop().catch(() => undefined);
     await closeRedis();
     await closePool();
     process.exit(0);
@@ -217,6 +186,8 @@ export async function startApi(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  await app.listen({ port: config.API_PORT, host: config.API_HOST });
-  logger.info({ port: config.API_PORT, host: config.API_HOST }, 'the api started');
+  logger.info(
+    { runtime: server.runtime, port: server.port, host: config.API_HOST },
+    'the api started',
+  );
 }

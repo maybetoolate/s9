@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { App } from '../context.js';
 import { z } from 'zod';
 import {
   listAuditEvents,
@@ -10,7 +10,7 @@ import {
 } from '../../db/repo.js';
 import { getPool } from '../../db/pool.js';
 import { requireContext } from '../context.js';
-import { ApiError, paginated, parseDate, parsePagination } from '../http.js';
+import { ApiError, jsonRoute, paginated, parseDate, parsePagination, readJson } from '../http.js';
 import { toAuditEventDto, toExecutionSummary, toStepExecutionDto } from '../mappers.js';
 import {
   cancelExecution,
@@ -43,10 +43,10 @@ const ResolveBody = z.object({
   reason: z.string().min(3, 'a reason is required').max(1_000),
 });
 
-export async function registerExecutionRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/executions', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const query = request.query as Record<string, unknown>;
+export async function registerExecutionRoutes(app: App): Promise<void> {
+  app.get('/api/executions', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const query = c.req.query();
     const pagination = parsePagination(query);
 
     const { rows, total } = await listExecutions(getPool(), ctx.workspaceId, {
@@ -62,11 +62,11 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
     });
 
     return paginated(rows.map(toExecutionSummary), total, pagination);
-  });
+  }));
 
-  app.get('/api/executions/:id', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const { id } = request.params as { id: string };
+  app.get('/api/executions/:id', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const execution = await getExecution(db, ctx.workspaceId, id);
@@ -104,15 +104,15 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
         resolveOutcomeUnknown: hasUnknownOutcome,
       },
     };
-  });
+  }));
 
-  app.post('/api/executions/:id/retry', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
-    const { id } = request.params as { id: string };
-    const body = RetryBody.parse(request.body ?? {});
+  app.post('/api/executions/:id/retry', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['retry'] });
+    const { id } = c.req.param() as { id: string };
+    const body = RetryBody.parse(await readJson(c));
 
     const idempotencyKey =
-      body.idempotencyKey ?? request.headers['idempotency-key']?.toString() ?? `retry:${id}:${body.stepKey}:${Date.now()}`;
+      body.idempotencyKey ?? c.req.header('idempotency-key') ?? `retry:${id}:${body.stepKey}:${Date.now()}`;
 
     const result = await retryStep({
       workspaceId: ctx.workspaceId,
@@ -122,19 +122,19 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       actorId: ctx.userId,
     });
 
-    reply.status(result.duplicate ? 200 : 202);
+    c.status(result.duplicate ? 200 : 202);
     return {
       executionId: id,
       stepKey: body.stepKey,
       accepted: result.accepted,
       duplicate: result.duplicate,
     };
-  });
+  }));
 
-  app.post('/api/executions/:id/rerun', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
-    const { id } = request.params as { id: string };
-    const body = RerunBody.parse(request.body ?? {});
+  app.post('/api/executions/:id/rerun', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['retry'] });
+    const { id } = c.req.param() as { id: string };
+    const body = RerunBody.parse(await readJson(c));
 
     const result = await rerunExecution({
       workspaceId: ctx.workspaceId,
@@ -144,7 +144,7 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       ...(body.input ? { correctedInput: body.input } : {}),
     });
 
-    reply.status(202);
+    c.status(202);
     // A rerun repeats every step, including the ones that already succeeded.
     return {
       executionId: result.id,
@@ -152,20 +152,20 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       status: 'queued',
       warning: 'a rerun repeats every step, including the ones that already succeeded',
     };
-  });
+  }));
 
-  app.post('/api/executions/:id/cancel', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
-    const { id } = request.params as { id: string };
+  app.post('/api/executions/:id/cancel', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['retry'] });
+    const { id } = c.req.param() as { id: string };
 
     await cancelExecution({ workspaceId: ctx.workspaceId, executionId: id, actorId: ctx.userId });
     return { executionId: id, status: 'cancelled' };
-  });
+  }));
 
-  app.post('/api/executions/:id/steps/:stepKey/resolve', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['retry'] });
-    const { id, stepKey } = request.params as { id: string; stepKey: string };
-    const body = ResolveBody.parse(request.body ?? {});
+  app.post('/api/executions/:id/steps/:stepKey/resolve', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['retry'] });
+    const { id, stepKey } = c.req.param() as { id: string; stepKey: string };
+    const body = ResolveBody.parse(await readJson(c));
 
     const result = await resolveOutcomeUnknown({
       workspaceId: ctx.workspaceId,
@@ -182,7 +182,7 @@ export async function registerExecutionRoutes(app: FastifyInstance): Promise<voi
       status: body.outcome,
       continued: result.continued,
     };
-  });
+  }));
 }
 
 interface StepDetail {

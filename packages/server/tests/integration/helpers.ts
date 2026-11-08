@@ -9,12 +9,12 @@ import { createActionExecutors, createActionRegistry } from '../../src/actions/i
 import { dispatchOutboxOnce } from '../../src/engine/dispatcher.js';
 import { getExecutionQueue } from '../../src/queue/execution-queue.js';
 import { getRedis } from '../../src/queue/connection.js';
-import type { FastifyInstance } from 'fastify';
+import type { App } from '../../src/api/context.js';
 
 /**
  * Integration helpers.
  *
- * The tests drive the real API (through Fastify's inject), the real database
+ * The tests drive the real API through Hono's request dispatcher, the real database
  * and the real engine, so they exercise the same code paths as production.
  */
 
@@ -22,16 +22,68 @@ export const executors = createActionExecutors();
 export const registry = createActionRegistry(executors);
 
 export interface TestContext {
-  app: FastifyInstance;
+  app: App;
   cookie: string;
   userId: string;
   workspaceId: string;
   email: string;
 }
 
+export interface InjectOptions {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  payload?: unknown;
+}
+
+export interface InjectResponse {
+  statusCode: number;
+  headers: Record<string, string | string[]>;
+  body: string;
+  json: <T = unknown>() => T;
+  text: () => string;
+}
+
+/** Dispatches a request through Hono without opening a socket. */
+export async function inject(app: App, options: InjectOptions): Promise<InjectResponse> {
+  const headers = new Headers(options.headers);
+  let body: string | Uint8Array | undefined;
+
+  if (options.payload !== undefined) {
+    if (typeof options.payload === 'string' || options.payload instanceof Uint8Array) {
+      body = options.payload as string | Uint8Array;
+    } else {
+      body = JSON.stringify(options.payload);
+    }
+    if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+  }
+
+  const response = await app.request(options.url, {
+    method: options.method,
+    headers,
+    ...(body !== undefined ? { body } : {}),
+  });
+
+  const text = await response.text();
+  const flatHeaders: Record<string, string | string[]> = {};
+  response.headers.forEach((value, key) => {
+    flatHeaders[key] = value;
+  });
+  const setCookie = response.headers.getSetCookie?.() ?? [];
+  if (setCookie.length > 0) flatHeaders['set-cookie'] = setCookie;
+
+  return {
+    statusCode: response.status,
+    headers: flatHeaders,
+    body: text,
+    text: () => text,
+    json: <T = unknown>() => JSON.parse(text) as T,
+  };
+}
+
 /** Signs a user up and returns an authenticated session cookie. */
-export async function createSession(app: FastifyInstance, email: string): Promise<TestContext> {
-  const response = await app.inject({
+export async function createSession(app: App, email: string): Promise<TestContext> {
+  const response = await inject(app, {
     method: 'POST',
     url: '/api/auth/sign-up/email',
     payload: { email, password: 'integration-test-password', name: 'Integration Test' },
@@ -39,7 +91,7 @@ export async function createSession(app: FastifyInstance, email: string): Promis
 
   if (response.statusCode >= 400) {
     // The user may already exist from a previous run: sign in instead.
-    const login = await app.inject({
+    const login = await inject(app, {
       method: 'POST',
       url: '/api/auth/sign-in/email',
       payload: { email, password: 'integration-test-password' },
@@ -107,7 +159,7 @@ export async function createPublishedWorkflow(
 
   if (options.publish === false) return { id: workflow.id, versionId: '' };
 
-  const response = await context.app.inject({
+  const response = await inject(context.app, {
     method: 'POST',
     url: `/api/workflows/${workflow.id}/publish`,
     headers: { cookie: context.cookie },

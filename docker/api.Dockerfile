@@ -1,3 +1,6 @@
+# The runtime image is selectable at build time; Bun is the default.
+ARG RUNTIME_IMAGE=oven/bun:1-alpine
+
 # Build stage: install the workspace and compile the server packages.
 FROM node:22-alpine AS build
 
@@ -17,10 +20,12 @@ COPY packages/server packages/server
 
 RUN pnpm --filter @s9/core build && pnpm --filter @s9/server build
 
-# Runtime stage.
-FROM node:22-alpine AS runtime
+# Runtime stage: the Hono server runs on Bun by default. Pass
+# RUNTIME_IMAGE=node:22-alpine and RUNTIME_BIN=node to run on Node.js instead.
+FROM ${RUNTIME_IMAGE} AS runtime
+ARG RUNTIME_BIN=bun
+ENV RUNTIME_BIN=${RUNTIME_BIN}
 
-RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -38,4 +43,4 @@ COPY --from=build /app/packages/server/dist packages/server/dist
 COPY --from=build /app/packages/server/migrations packages/server/migrations
 
 EXPOSE 4000 4001
-CMD ["node", "packages/server/dist/main-api.js"]
+CMD ["sh", "-c", "exec \"$RUNTIME_BIN\" packages/server/dist/main-api.js"]

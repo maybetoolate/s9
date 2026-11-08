@@ -5,7 +5,8 @@
   "description": "s9 - a small, self-hostable workflow engine with execution transparency and safe recovery.",
   "packageManager": "pnpm@11.24.0",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=20.11",
+    "bun": ">=1.1"
   },
   "scripts": {
     "build": "pnpm --filter @s9/core build && pnpm --filter @s9/server build && pnpm --filter @s9/web build",
@@ -36,7 +37,6 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "pino-pretty": "^13.2.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

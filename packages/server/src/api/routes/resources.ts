@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { App } from '../context.js';
 import { z } from 'zod';
 import {
   ACTION_METADATA,
@@ -29,7 +29,7 @@ import {
 import { getPool, withTransaction } from '../../db/pool.js';
 import { getUserProfile } from '../../auth/client.js';
 import { requireContext } from '../context.js';
-import { ApiError, paginated, parsePagination } from '../http.js';
+import { ApiError, jsonRoute, paginated, parsePagination, readJson } from '../http.js';
 import { toAuditEventDto, toCredentialDto, toExecutionSummary, toScheduleDto } from '../mappers.js';
 import { encrypt } from '../../lib/secrets.js';
 import { getRedis } from '../../queue/connection.js';
@@ -48,10 +48,10 @@ const CredentialBody = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 
-export async function registerResourceRoutes(app: FastifyInstance): Promise<void> {
+export async function registerResourceRoutes(app: App): Promise<void> {
   // -------------------------------------------------------------- me
-  app.get('/api/me', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/me', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
     // The profile lives in the auth service; the API never reads its tables.
     const profile = await getUserProfile(ctx.userId);
     if (!profile) throw ApiError.unauthorized('the account no longer exists');
@@ -60,11 +60,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
       workspace: { id: ctx.workspaceId, name: ctx.workspaceName },
       role: ctx.role,
     };
-  });
+  }));
 
   // -------------------------------------------------------- dashboard
-  app.get('/api/dashboard', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/dashboard', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
     const db = getPool();
 
     const workflows = await listWorkflows(db, ctx.workspaceId, { page: 1, pageSize: 1 });
@@ -122,11 +122,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
       recentExecutions: recent.rows.map(toExecutionSummary),
       needsAttention: needsAttention.rows.map(toExecutionSummary),
     };
-  });
+  }));
 
   // --------------------------------------------------------- actions
-  app.get('/api/actions', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/actions', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
     return {
       data: ACTION_TYPES.map((type) => {
         const metadata = ACTION_METADATA[type];
@@ -141,13 +141,13 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
         };
       }),
     };
-  });
+  }));
 
-  app.post('/api/actions/validate', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
+  app.post('/api/actions/validate', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
     const body = z
       .object({ type: z.enum(ACTION_TYPES), config: z.unknown() })
-      .parse(request.body ?? {});
+      .parse(await readJson(c));
 
     const result = parseActionConfig(body.type, body.config);
     if (!result.success) {
@@ -157,18 +157,18 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
       };
     }
     return { valid: true, issues: [] };
-  });
+  }));
 
   // ----------------------------------------------------- credentials
-  app.get('/api/credentials', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/credentials', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
     const rows = await listCredentials(getPool(), ctx.workspaceId);
     return { data: rows.map(toCredentialDto) };
-  });
+  }));
 
-  app.post('/api/credentials', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['manage_credentials'] });
-    const body = CredentialBody.parse(request.body ?? {});
+  app.post('/api/credentials', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['manage_credentials'] });
+    const body = CredentialBody.parse(await readJson(c));
 
     const credential = await withTransaction(async (client) => {
       const row = await insertCredential(client, {
@@ -190,15 +190,15 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
       return row;
     });
 
-    reply.status(201);
+    c.status(201);
     // The plaintext secret is never returned.
     return toCredentialDto(credential);
-  });
+  }));
 
-  app.post('/api/credentials/:id/rotate', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['rotate_credentials'] });
-    const { id } = request.params as { id: string };
-    const body = z.object({ secret: z.string().min(1).max(10_000) }).parse(request.body ?? {});
+  app.post('/api/credentials/:id/rotate', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['rotate_credentials'] });
+    const { id } = c.req.param() as { id: string };
+    const body = z.object({ secret: z.string().min(1).max(10_000) }).parse(await readJson(c));
 
     const db = getPool();
     const credential = await getCredential(db, ctx.workspaceId, id);
@@ -219,11 +219,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
 
     const updated = await getCredential(db, ctx.workspaceId, id);
     return toCredentialDto(updated as NonNullable<typeof updated>);
-  });
+  }));
 
-  app.delete('/api/credentials/:id', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['manage_credentials'] });
-    const { id } = request.params as { id: string };
+  app.delete('/api/credentials/:id', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['manage_credentials'] });
+    const { id } = c.req.param() as { id: string };
 
     const db = getPool();
     const credential = await getCredential(db, ctx.workspaceId, id);
@@ -252,18 +252,18 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
     });
 
     return { ok: true };
-  });
+  }));
 
   // ------------------------------------------------------- schedules
-  app.get('/api/schedules', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/schedules', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
     const rows = await listSchedules(getPool(), ctx.workspaceId);
     return { data: rows.map((row) => ({ ...toScheduleDto(row), workflowName: row.workflow_name })) };
-  });
+  }));
 
-  app.post('/api/schedules/:workflowId/enable', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { workflowId } = request.params as { workflowId: string };
+  app.post('/api/schedules/:workflowId/enable', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { workflowId } = c.req.param() as { workflowId: string };
     const db = getPool();
     const rows = await listSchedules(db, ctx.workspaceId);
     const schedule = rows.find((row) => row.workflow_id === workflowId);
@@ -275,11 +275,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
       computeNextRun(schedule.schedule_spec, schedule.timezone),
     ]);
     return { ok: true, enabled: true };
-  });
+  }));
 
-  app.post('/api/schedules/:workflowId/disable', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['publish'] });
-    const { workflowId } = request.params as { workflowId: string };
+  app.post('/api/schedules/:workflowId/disable', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['publish'] });
+    const { workflowId } = c.req.param() as { workflowId: string };
     const db = getPool();
     const rows = await listSchedules(db, ctx.workspaceId);
     const schedule = rows.find((row) => row.workflow_id === workflowId);
@@ -287,12 +287,12 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
 
     await db.query('UPDATE schedules SET enabled = false, next_run_at = NULL WHERE id = $1', [schedule.id]);
     return { ok: true, enabled: false };
-  });
+  }));
 
   // ----------------------------------------------------------- audit
-  app.get('/api/audit', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
-    const query = request.query as Record<string, unknown>;
+  app.get('/api/audit', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
+    const query = c.req.query();
     const pagination = parsePagination(query);
 
     const { rows, total } = await listAuditEvents(getPool(), ctx.workspaceId, {
@@ -303,11 +303,11 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
     });
 
     return paginated(rows.map(toAuditEventDto), total, pagination);
-  });
+  }));
 
   // ------------------------------------------------------ operations
-  app.get('/api/ops/queue', async (request, reply) => {
-    await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/ops/queue', jsonRoute(async (c) => {
+    await requireContext(c, { capabilities: ['read'] });
     const db = getPool();
 
     const queue = getExecutionQueue(getRedis());
@@ -338,13 +338,13 @@ export async function registerResourceRoutes(app: FastifyInstance): Promise<void
         currentExecutionId: worker.current_execution_id,
       })),
     };
-  });
+  }));
 
-  app.get('/api/ops/workspace-usage', async (request, reply) => {
-    const ctx = await requireContext(request, reply, { capabilities: ['read'] });
+  app.get('/api/ops/workspace-usage', jsonRoute(async (c) => {
+    const ctx = await requireContext(c, { capabilities: ['read'] });
     const active = await countRunningExecutionsInWorkspace(getPool(), ctx.workspaceId);
     return { activeExecutions: active };
-  });
+  }));
 }
 
 /** Converts a zod schema into a small JSON schema description for the UI. */

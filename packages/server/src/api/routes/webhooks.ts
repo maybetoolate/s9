@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { App } from '../context.js';
 import {
   buildExecutionIdempotencyKey,
   LIMITS,
@@ -8,7 +8,7 @@ import {
 import { getWebhookEndpointBySlug, getWorkflowById, countRunningExecutions } from '../../db/repo.js';
 import type { WebhookEndpointRow } from '../../db/rows.js';
 import { getPool } from '../../db/pool.js';
-import { ApiError } from '../http.js';
+import { ApiError, jsonRoute } from '../http.js';
 import { createWebhookExecution } from '../../engine/execution-service.js';
 import { logger } from '../../lib/logger.js';
 import { decrypt } from '../../lib/secrets.js';
@@ -32,9 +32,9 @@ const SIGNATURE_HEADER = 'x-s9-signature';
 const IDEMPOTENCY_HEADER = 'idempotency-key';
 const EVENT_ID_HEADER = 'x-event-id';
 
-export async function registerWebhookRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/webhooks/:slug', async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+export async function registerWebhookRoutes(app: App): Promise<void> {
+  app.post('/webhooks/:slug', jsonRoute(async (c) => {
+    const slug = c.req.param('slug')!;
     const db = getPool();
 
     const endpoint = await getWebhookEndpointBySlug(db, slug);
@@ -47,15 +47,15 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     if (!workflow) throw ApiError.notFound('unknown webhook endpoint');
 
     // The body size is limited before anything else happens.
-    const rawBody = request.rawBody;
-    const bodySize = rawBody ? rawBody.length : 0;
+    const rawBody = Buffer.from(await c.req.arrayBuffer());
+    const bodySize = rawBody.length;
     if (bodySize > LIMITS.maxWebhookBodyBytes) {
       throw ApiError.payloadTooLarge(
         `the webhook body may not exceed ${Math.floor(LIMITS.maxWebhookBodyBytes / 1024)} KB`,
       );
     }
 
-    const rawText = rawBody ? rawBody.toString('utf8') : '';
+    const rawText = rawBody.toString('utf8');
     let payload: Record<string, unknown>;
     try {
       const parsed = rawText ? JSON.parse(rawText) : {};
@@ -78,8 +78,8 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
 
     // Signature verification.
     if (endpoint.require_signature) {
-      const signature = request.headers[SIGNATURE_HEADER];
-      if (!signature || typeof signature !== 'string') {
+      const signature = c.req.header(SIGNATURE_HEADER);
+      if (!signature) {
         throw ApiError.unauthorized('the webhook signature header is missing');
       }
       if (!verifyEndpointSignature(endpoint, signature, rawText)) {
@@ -89,7 +89,7 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     }
 
     const sourceKey =
-      headerValue(request.headers[IDEMPOTENCY_HEADER]) ?? headerValue(request.headers[EVENT_ID_HEADER]) ?? null;
+      headerValue(c.req.header(IDEMPOTENCY_HEADER)) ?? headerValue(c.req.header(EVENT_ID_HEADER)) ?? null;
 
     // Backpressure: reject further intake when the workflow is over its limit.
     const queued = await countRunningExecutions(db, workflow.id);
@@ -116,13 +116,13 @@ export async function registerWebhookRoutes(app: FastifyInstance): Promise<void>
     });
 
     // 202 for a newly accepted event, 200 for a duplicate.
-    reply.status(result.duplicate ? 200 : 202);
+    c.status(result.duplicate ? 200 : 202);
     return {
       executionId: result.executionId,
       status: result.duplicate ? 'duplicate' : 'accepted',
       accepted: !result.duplicate,
     };
-  });
+  }));
 }
 
 function headerValue(value: string | string[] | undefined): string | null {

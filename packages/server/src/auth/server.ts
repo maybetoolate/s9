@@ -1,16 +1,14 @@
-import Fastify, {
-  type FastifyInstance,
-  type FastifyReply,
-  type FastifyRequest,
-} from 'fastify';
+import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { auth, authPool } from '../api/auth.js';
 import { env } from '../config/env.js';
-import { createLogger, loggerOptions } from '../lib/logger.js';
-import { ApiError, sendError } from '../api/http.js';
+import { createLogger } from '../lib/logger.js';
+import { ApiError, relayResponse, sendError } from '../api/http.js';
 import { closePool } from '../db/pool.js';
 import { isInsufficientScopeError, verifyBearerToken } from 'better-auth/oauth2';
 import { ensureServiceClient } from './bootstrap.js';
+import { serveHttp } from '../lib/serve.js';
 
 /**
  * The authentication service.
@@ -24,13 +22,15 @@ import { ensureServiceClient } from './bootstrap.js';
  * never a user.
  */
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    rawBody?: Buffer;
-  }
+interface AuthEnv {
+  Variables: {
+    requestId: string;
+  };
 }
 
-export async function buildAuthServer(): Promise<FastifyInstance> {
+const MAX_BODY_BYTES = 1024 * 1024;
+
+export async function buildAuthServer(): Promise<Hono<AuthEnv>> {
   const config = env();
 
   // Migrations run before the server is built, so the OAuth tables exist by
@@ -38,105 +38,74 @@ export async function buildAuthServer(): Promise<FastifyInstance> {
   // the source of truth for its secret and scopes.
   await ensureServiceClient();
 
-  const app = Fastify({
-    logger: loggerOptions({ service: 's9-auth' }),
-    bodyLimit: 1024 * 1024,
-    trustProxy: true,
+  const app = new Hono<AuthEnv>();
+  const serviceLogger = createLogger({ service: 's9-auth' });
+
+  app.use('*', async (c, next) => {
+    const incoming = c.req.header('x-request-id');
+    c.set('requestId', incoming && incoming.length > 0 ? incoming : randomUUID());
+    await next();
   });
 
-  // Better-Auth needs the exact bytes it was sent, so the JSON body is kept.
-  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    const text = (body as Buffer).toString('utf8');
-    if (text.trim().length === 0) {
-      done(null, {});
-      return;
-    }
-    try {
-      done(null, JSON.parse(text));
-    } catch {
-      done(new ApiError(400, 'invalid_json', 'the request body is not valid JSON'), undefined);
-    }
-  });
-
-  app.addContentTypeParser('text/plain', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    done(null, (body as Buffer).toString('utf8'));
-  });
-
-  // The OAuth2 token endpoint uses application/x-www-form-urlencoded.
-  app.addContentTypeParser(
-    'application/x-www-form-urlencoded',
-    { parseAs: 'string' },
-    (request, body, done) => {
-      request.rawBody = Buffer.from(body as string);
-      try {
-        done(null, Object.fromEntries(new URLSearchParams(body as string)));
-      } catch {
-        done(new ApiError(400, 'invalid_request', 'the form body is not valid'), undefined);
-      }
-    },
+  app.use(
+    '*',
+    bodyLimit({
+      maxSize: MAX_BODY_BYTES,
+      onError: (c) =>
+        sendError(c, ApiError.payloadTooLarge('the request body is too large'), c.get('requestId')),
+    }),
   );
 
-  // Better-Auth may receive a content type this service does not parse. The
-  // handler is handed the untouched bytes, so the request still works.
-  app.addContentTypeParser('*', { parseAs: 'buffer' }, (request, body, done) => {
-    request.rawBody = body as Buffer;
-    done(null, body);
+  app.onError((error, c) => {
+    const requestId = c.get('requestId');
+    if (error instanceof ApiError) return sendError(c, error, requestId);
+    serviceLogger.error({ err: error }, 'the auth request failed');
+    return sendError(c, error, requestId);
   });
 
-  app.addHook('onRequest', async (request: FastifyRequest) => {
-    const incoming = request.headers['x-request-id'];
-    const requestId = typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
-    request.id = requestId;
-  });
-
-  app.setErrorHandler((error, request: FastifyRequest, reply: FastifyReply) => {
-    if (error instanceof ApiError) return sendError(reply, error, request.id);
-    request.log.error({ err: error }, 'the auth request failed');
-    return sendError(reply, error, request.id);
-  });
-
-  app.setNotFoundHandler((request, reply) => {
-    return sendError(reply, ApiError.notFound(`no route for ${request.method} ${request.url}`), request.id);
-  });
+  app.notFound((c) =>
+    sendError(
+      c,
+      ApiError.notFound(`no route for ${c.req.method} ${c.req.path}`),
+      c.get('requestId'),
+    ),
+  );
 
   // ------------------------------------------------------------- health
-  app.get('/health', async () => ({ status: 'ok', service: 's9-auth' }));
+  app.get('/health', (c) => c.json({ status: 'ok', service: 's9-auth' }));
 
-  app.get('/health/ready', async (request, reply) => {
+  app.get('/health/ready', async (c) => {
     try {
       await authPool.query('SELECT 1');
-      return { status: 'ready', checks: { database: 'ok' } };
+      return c.json({ status: 'ready', checks: { database: 'ok' } });
     } catch (error) {
-      request.log.error({ err: error }, 'the auth database health check failed');
-      reply.status(503);
-      return { status: 'degraded', checks: { database: 'error' } };
+      serviceLogger.error({ err: error }, 'the auth database health check failed');
+      return c.json({ status: 'degraded', checks: { database: 'error' } }, 503);
     }
   });
 
   // ----------------------------------------------------------- internal API
-  app.post('/internal/sessions/validate', async (request) => {
-    await verifyServiceToken(bearerToken(request.headers.authorization), 'sessions:validate');
+  app.post('/internal/sessions/validate', async (c) => {
+    await verifyServiceToken(bearerToken(c.req.header('authorization')), 'sessions:validate');
 
-    const cookie = request.headers.cookie;
-    if (!cookie) return { session: null };
+    const cookie = c.req.header('cookie');
+    if (!cookie) return c.json({ session: null });
 
     const session = await auth.api.getSession({ headers: new Headers({ cookie }) });
-    if (!session?.user) return { session: null };
+    if (!session?.user) return c.json({ session: null });
 
-    return {
+    return c.json({
       session: {
         userId: session.user.id,
         expiresAt: session.session.expiresAt,
       },
-    };
+    });
   });
 
-  app.get('/internal/users/:id', async (request) => {
-    await verifyServiceToken(bearerToken(request.headers.authorization), 'users:read');
+  app.get('/internal/users/:id', async (c) => {
+    await verifyServiceToken(bearerToken(c.req.header('authorization')), 'users:read');
 
-    const { id } = request.params as { id: string };
+    const id = c.req.param('id');
     const result = await authPool.query<{
       id: string;
       email: string;
@@ -146,46 +115,33 @@ export async function buildAuthServer(): Promise<FastifyInstance> {
 
     const user = result.rows[0];
     if (!user) throw new ApiError(404, 'unknown_user', 'the user does not exist');
-    return user;
+    return c.json(user);
   });
 
   // ------------------------------------------------------------- Better-Auth
-  app.all('/api/auth/*', async (request, reply) => {
+  app.all('/api/auth/*', async (c) => {
     // The public origin, not the internal address, is what Better-Auth uses to
     // build URLs and to decide the cookie scope.
-    const url = new URL(request.url, config.WEB_PUBLIC_URL);
+    const incoming = new URL(c.req.url);
+    const url = new URL(incoming.pathname + incoming.search, config.WEB_PUBLIC_URL);
 
     const headers = new Headers();
-    for (const [key, value] of Object.entries(request.headers)) {
-      if (value === undefined) continue;
-      if (Array.isArray(value)) {
-        for (const item of value) headers.append(key, item);
-      } else {
-        headers.set(key, String(value));
-      }
+    for (const [key, value] of c.req.raw.headers) {
+      if (key === 'host' || key === 'content-length' || key === 'connection') continue;
+      headers.append(key, value);
     }
 
-    const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
-    const body = hasBody ? (request.rawBody ?? Buffer.alloc(0)) : undefined;
+    const hasBody = c.req.method !== 'GET' && c.req.method !== 'HEAD';
+    const body = hasBody ? await c.req.arrayBuffer() : undefined;
 
     const authRequest = new Request(url.toString(), {
-      method: request.method,
+      method: c.req.method,
       headers,
-      ...(body !== undefined ? { body, duplex: 'half' } : {}),
-    } as RequestInit);
-
-    const response = await auth.handler(authRequest);
-
-    reply.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (key.toLowerCase() === 'set-cookie') return;
-      reply.header(key, value);
+      ...(body !== undefined ? { body } : {}),
     });
 
-    const setCookie = response.headers.getSetCookie?.() ?? [];
-    if (setCookie.length > 0) reply.header('set-cookie', setCookie);
-
-    return reply.send(Buffer.from(await response.arrayBuffer()));
+    const response = await auth.handler(authRequest);
+    return relayResponse(response);
   });
 
   return app;
@@ -196,9 +152,15 @@ export async function startAuth(): Promise<void> {
   const serviceLogger = createLogger({ service: 's9-auth' });
   const app = await buildAuthServer();
 
+  const server = await serveHttp({
+    fetch: app.fetch,
+    port: config.AUTH_PORT,
+    hostname: config.AUTH_HOST,
+  });
+
   const shutdown = async (signal: string) => {
     serviceLogger.info({ signal }, 'the auth service is shutting down');
-    await app.close().catch(() => undefined);
+    await server.stop().catch(() => undefined);
     await authPool.end().catch(() => undefined);
     await closePool();
     process.exit(0);
@@ -207,9 +169,8 @@ export async function startAuth(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  await app.listen({ port: config.AUTH_PORT, host: config.AUTH_HOST });
   serviceLogger.info(
-    { port: config.AUTH_PORT, host: config.AUTH_HOST },
+    { runtime: server.runtime, port: server.port, host: config.AUTH_HOST },
     'the auth service started',
   );
 }

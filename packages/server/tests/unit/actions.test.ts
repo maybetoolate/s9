@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
   S9Error,
   type ActionContext,
@@ -53,19 +53,19 @@ function adapterTypes(executors: ActionExecutors): ActionType[] {
 
 function executeSpies(executors: ActionExecutors, result: ActionResult) {
   return {
-    http_request: vi.spyOn(executors.http_request, 'execute').mockResolvedValue(result),
-    send_email: vi.spyOn(executors.send_email, 'execute').mockResolvedValue(result),
-    database_insert: vi.spyOn(executors.database_insert, 'execute').mockResolvedValue(result),
-    notification: vi.spyOn(executors.notification, 'execute').mockResolvedValue(result),
+    http_request: spyOn(executors.http_request, 'execute').mockResolvedValue(result),
+    send_email: spyOn(executors.send_email, 'execute').mockResolvedValue(result),
+    database_insert: spyOn(executors.database_insert, 'execute').mockResolvedValue(result),
+    notification: spyOn(executors.notification, 'execute').mockResolvedValue(result),
   };
 }
 
 function classifySpies(executors: ActionExecutors, result: ClassifiedError) {
   return {
-    http_request: vi.spyOn(executors.http_request, 'classifyError').mockReturnValue(result),
-    send_email: vi.spyOn(executors.send_email, 'classifyError').mockReturnValue(result),
-    database_insert: vi.spyOn(executors.database_insert, 'classifyError').mockReturnValue(result),
-    notification: vi.spyOn(executors.notification, 'classifyError').mockReturnValue(result),
+    http_request: spyOn(executors.http_request, 'classifyError').mockReturnValue(result),
+    send_email: spyOn(executors.send_email, 'classifyError').mockReturnValue(result),
+    database_insert: spyOn(executors.database_insert, 'classifyError').mockReturnValue(result),
+    notification: spyOn(executors.notification, 'classifyError').mockReturnValue(result),
   };
 }
 
@@ -134,7 +134,7 @@ describe('dispatchExecute', () => {
         else expect(spies[candidate]).not.toHaveBeenCalled();
       }
 
-      vi.restoreAllMocks();
+      mock.restore();
     }
   });
 
@@ -165,7 +165,7 @@ describe('dispatchClassifyError', () => {
         else expect(spies[candidate]).not.toHaveBeenCalled();
       }
 
-      vi.restoreAllMocks();
+      mock.restore();
     }
   });
 

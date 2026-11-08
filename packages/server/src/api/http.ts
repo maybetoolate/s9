@@ -1,5 +1,7 @@
-import type { FastifyReply } from 'fastify';
+import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { LIMITS, redactString } from '@s9/core';
+import type { AppContext } from './context.js';
 
 /**
  * The API error envelope.
@@ -52,7 +54,7 @@ export interface ErrorBody {
   };
 }
 
-export function sendError(reply: FastifyReply, error: unknown, requestId?: string): FastifyReply {
+export function sendError(c: Context, error: unknown, requestId?: string): Response {
   const statusCode = error instanceof ApiError ? error.statusCode : 500;
   const code = error instanceof ApiError ? error.code : 'internal_error';
   const message =
@@ -67,7 +69,55 @@ export function sendError(reply: FastifyReply, error: unknown, requestId?: strin
     },
   };
 
-  return reply.status(statusCode).send(body);
+  return c.json(body, statusCode as ContentfulStatusCode);
+}
+
+/**
+ * Reads the JSON request body.
+ *
+ * An empty body is treated as an empty object, matching the old parser, and
+ * invalid JSON is reported through the normal error envelope.
+ */
+export async function readJson(c: Context): Promise<unknown> {
+  const text = await c.req.text();
+  if (text.trim().length === 0) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ApiError(400, 'invalid_json', 'the request body is not valid JSON');
+  }
+}
+
+/** Wraps a handler so a plain object (or a DTO) is serialized as JSON. */
+export function jsonRoute(
+  handler: (c: AppContext) => Promise<unknown> | unknown,
+): (c: AppContext) => Promise<Response> {
+  return async (c) => {
+    const result = await handler(c);
+    if (result instanceof Response) return result;
+    return c.json(result as never);
+  };
+}
+
+/**
+ * Copies an upstream response into a Hono response, keeping `set-cookie`
+ * headers separate instead of flattening them.
+ */
+export async function relayResponse(upstream: Response): Promise<Response> {
+  const headers = new Headers();
+  upstream.headers.forEach((value, key) => {
+    if (key.toLowerCase() === 'set-cookie' || key.toLowerCase() === 'content-length') return;
+    headers.set(key, value);
+  });
+
+  for (const cookie of upstream.headers.getSetCookie?.() ?? []) {
+    headers.append('set-cookie', cookie);
+  }
+
+  return new Response(await upstream.arrayBuffer(), {
+    status: upstream.status,
+    headers,
+  });
 }
 
 export interface Pagination {
