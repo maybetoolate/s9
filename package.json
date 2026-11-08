@@ -5,7 +5,7 @@
   "description": "s9 - a small, self-hostable workflow engine with execution transparency and safe recovery.",
   "packageManager": "pnpm@11.24.0",
   "engines": {
-    "node": ">=20.11",
+    "node": ">=22.18",
     "bun": ">=1.1"
   },
   "scripts": {

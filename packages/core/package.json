@@ -13,7 +13,7 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },
@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "tsup": "^8.3.5",
+    "tsdown": "^0.23.7",
     "typescript": "^5.7.2"
   }
 }

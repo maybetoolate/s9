@@ -35,7 +35,7 @@ retry, because a timeout does not prove the remote operation failed.
 
 ## Quick start
 
-Requirements: Docker (for PostgreSQL and Redis), Node.js 20.11+ for the web app and tooling, and either Bun 1.1+ or Node.js 22+ for the API (which embeds authentication), worker and scheduler. Bun is the default runtime; the Docker images and dev scripts use it.
+Requirements: Docker (for PostgreSQL and Redis), Node.js 22.18+ for the web app and the tsdown build tooling, and either Bun 1.1+ or Node.js 22+ for the API (which embeds authentication), worker and scheduler. Bun is the default runtime; the Docker images and dev scripts use it.
 
 ```bash
 # 1. Configure the environment

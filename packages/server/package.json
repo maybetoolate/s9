@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/main-api.js",
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "dev:api": "bun --watch src/main-api.ts",
@@ -43,7 +43,7 @@
     "@types/pg": "^8.15.6",
     "bun-types": "^1.4.4",
     "drizzle-kit": "^0.31.11",
-    "tsup": "^8.3.5",
+    "tsdown": "^0.23.7",
     "typescript": "^5.7.2"
   }
 }
