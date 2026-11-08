@@ -9,6 +9,5 @@
  */
 
 export { auth } from './instance.js';
-export { handleAuthRequest } from './http.js';
 export { validateSession, getUserProfile } from './session.js';
 export type { SessionInfo, UserProfile } from './session.js';

@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { eq } from 'drizzle-orm';
 import type { App } from '../../src/api/context.js';
-import { buildServer, createSession, inject, resetData } from './helpers.js';
+import { workspaceMemberships, workspaces } from '../../src/db/schema.js';
+import { buildServer, createSession, getDb, inject, resetData } from './helpers.js';
 
 /**
  * The auth module.
@@ -37,6 +39,51 @@ describe('auth module', () => {
     expect(body.user.id).toBe(context.userId);
     expect(body.user.email).toBe(context.email);
     expect(body.user.name).toBe('Integration Test');
+  });
+
+  it('provisions one owner workspace for a new account on first use', async () => {
+    const email = `provision-${Date.now()}-${Math.random().toString(16).slice(2)}@example.com`;
+    const signUp = await inject(app, {
+      method: 'POST',
+      url: '/api/auth/sign-up/email',
+      payload: { email, password: 'integration-test-password', name: 'Provisioned User' },
+    });
+    expect(signUp.statusCode).toBe(200);
+
+    const userId = (signUp.json() as { user: { id: string } }).user.id;
+    const setCookie = signUp.headers['set-cookie'];
+    const cookie = (Array.isArray(setCookie) ? setCookie[0] : setCookie)?.split(';')[0] ?? '';
+
+    // Sign-up creates the account only. The first authorized requests must
+    // provision exactly one workspace, even when they race each other.
+    const responses = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        inject(app, { method: 'GET', url: '/api/me', headers: { cookie } }),
+      ),
+    );
+
+    const workspaceIds = new Set<string>();
+    for (const response of responses) {
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as {
+        workspace: { id: string; name: string };
+        role: string;
+      };
+      expect(body.role).toBe('owner');
+      expect(body.workspace.name).toBe("Provisioned User's workspace");
+      workspaceIds.add(body.workspace.id);
+    }
+    expect(workspaceIds.size).toBe(1);
+
+    const db = getDb();
+    const memberships = await db
+      .select()
+      .from(workspaceMemberships)
+      .where(eq(workspaceMemberships.user_id, userId));
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]!.role).toBe('owner');
+    expect(memberships[0]!.workspace_id).toBe([...workspaceIds][0]!);
+    expect(await db.select().from(workspaces)).toHaveLength(1);
   });
 
   it('rejects /api/me without a session', async () => {

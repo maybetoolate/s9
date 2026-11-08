@@ -1,0 +1,37 @@
+# Dependencies are installed inside the image, never copied from the host.
+# Copying the host's node_modules would overwrite pnpm's symlinks with ones
+# that point at a different virtual-store hash.
+node_modules
+**/node_modules
+
+# Build output is produced inside the image.
+dist
+**/dist
+.next
+**/.next
+out
+**/out
+coverage
+**/coverage
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Local environment and secrets never belong in an image.
+.env
+.env.*
+!.env.example
+
+# Local tooling, repository metadata and artifacts the images do not use.
+.git
+.github
+.turbo
+.pnpm-store
+tmp
+data
+docs
+scripts
+packages/neovim
+packages/web/test-results
+packages/web/playwright-report
+packages/web/e2e/.auth
+*.log

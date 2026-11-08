@@ -821,6 +821,33 @@ export async function getExecutionById(db: Db, executionId: string): Promise<Exe
   return row ?? null;
 }
 
+/**
+ * Reads an execution together with the display fields of its workflow.
+ *
+ * The execution row stores ids only; the list and the detail view both show
+ * the workflow name and the version number, so the API reads them in one
+ * query. The version join is optional because a test run pins a draft instead
+ * of a published version.
+ */
+export async function getExecutionWithWorkflow(
+  db: Db,
+  workspaceId: string,
+  executionId: string,
+): Promise<(ExecutionRow & { workflow_name: string; version_number: number | null }) | null> {
+  const [row] = await db
+    .select({
+      ...getTableColumns(executions),
+      workflow_name: workflows.name,
+      version_number: workflowVersions.version_number,
+    })
+    .from(executions)
+    .innerJoin(workflows, eq(workflows.id, executions.workflow_id))
+    .leftJoin(workflowVersions, eq(workflowVersions.id, executions.workflow_version_id))
+    .where(and(eq(executions.id, executionId), eq(executions.workspace_id, workspaceId)))
+    .limit(1);
+  return row ?? null;
+}
+
 export interface ExecutionListFilters {
   workflowId?: string;
   status?: ExecutionStatus | 'all';
@@ -837,7 +864,7 @@ export async function listExecutions(
   db: Db,
   workspaceId: string,
   filters: ExecutionListFilters,
-): Promise<{ rows: (ExecutionRow & { workflow_name: string; version_number: number })[]; total: number }> {
+): Promise<{ rows: (ExecutionRow & { workflow_name: string; version_number: number | null })[]; total: number }> {
   const conditions: (SQL | undefined)[] = [eq(executions.workspace_id, workspaceId)];
 
   if (filters.workflowId) {
@@ -877,7 +904,7 @@ export async function listExecutions(
     })
     .from(executions)
     .innerJoin(workflows, eq(workflows.id, executions.workflow_id))
-    .innerJoin(workflowVersions, eq(workflowVersions.id, executions.workflow_version_id))
+    .leftJoin(workflowVersions, eq(workflowVersions.id, executions.workflow_version_id))
     .where(where)
     .orderBy(desc(executions.created_at))
     .limit(filters.pageSize)

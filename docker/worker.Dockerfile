@@ -18,7 +18,7 @@ COPY packages/web/package.json packages/web/
 # instead of starting over. Low concurrency keeps a slow registry from
 # starving the large tarballs.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
-    pnpm install --frozen-lockfile --filter @s9/core --filter @s9/server \
+    pnpm install --frozen-lockfile --trust-lockfile --filter @s9/core --filter @s9/server \
       --store-dir=/pnpm-store \
       --network-concurrency=2 \
       --fetch-retries=5 \

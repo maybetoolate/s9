@@ -23,7 +23,8 @@
     "db:reset": "bun src/cli/reset.ts",
     "test": "bun test tests/unit && bun test --preload ./tests/setup/env.ts tests/integration",
     "test:unit": "bun test tests/unit",
-    "test:integration": "bun test --preload ./tests/setup/env.ts tests/integration"
+    "test:integration": "bun test --preload ./tests/setup/env.ts tests/integration",
+    "e2e:prepare": "bun tests/e2e/setup.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.6",

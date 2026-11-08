@@ -5,7 +5,7 @@ import {
   listExecutions,
   listStepAttempts,
   listStepExecutions,
-  getExecution,
+  getExecutionWithWorkflow,
   getStepExecution,
 } from '../../db/repo.js';
 import { getDb } from '../../db/client.js';
@@ -69,7 +69,7 @@ export async function registerExecutionRoutes(app: App): Promise<void> {
     const { id } = c.req.param() as { id: string };
 
     const db = getDb();
-    const execution = await getExecution(db, ctx.workspaceId, id);
+    const execution = await getExecutionWithWorkflow(db, ctx.workspaceId, id);
     if (!execution) throw ApiError.notFound('execution not found');
 
     const steps = await listStepExecutions(db, id);

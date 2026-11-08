@@ -16,7 +16,7 @@ import {
   updateScheduleRunState,
   type ScheduleRow,
 } from '../db/repo.js';
-import { databaseNow, getDb, withAdvisoryLock, withTransaction } from '../db/client.js';
+import { databaseNow, getDb, withAdvisoryLock, type Db } from '../db/client.js';
 import { schedules } from '../db/schema.js';
 import { logger } from '../lib/logger.js';
 import { createExecution } from './execution-service.js';
@@ -137,19 +137,19 @@ async function processSchedule(schedule: ScheduleRow, now: Date) {
       const [next] = nextOccurrences({
         expression: row.schedule_spec,
         timezone: row.timezone,
-        after: new Date(toFire.scheduledFor.getTime() - 1_000),
+        after: toFire.scheduledFor,
         count: 1,
       });
       await updateScheduleRunState(client, row.id, next?.scheduledFor ?? null, toFire.scheduledFor);
       return { occurrencesCreated: 0, executionsCreated: 0 };
     }
 
-    const executionsCreated = await createScheduledExecution(row, toFire, occurrence.id);
+    const executionsCreated = await createScheduledExecution(row, toFire, occurrence.id, client);
 
     const [next] = nextOccurrences({
       expression: row.schedule_spec,
       timezone: row.timezone,
-      after: new Date(toFire.scheduledFor.getTime() - 1_000),
+      after: toFire.scheduledFor,
       count: 1,
     });
     await updateScheduleRunState(client, row.id, next?.scheduledFor ?? null, toFire.scheduledFor);
@@ -168,6 +168,7 @@ async function createScheduledExecution(
   schedule: ScheduleRow,
   occurrence: ScheduleOccurrence,
   occurrenceId: string,
+  client: Db,
 ): Promise<number> {
   const db = getDb();
 
@@ -205,9 +206,10 @@ async function createScheduledExecution(
 
   if (result.duplicate) return 0;
 
-  await withTransaction(async (client) => {
-    await linkOccurrenceToExecution(client, occurrenceId, result.id);
-  });
+  // The occurrence row was inserted by the caller's transaction and is not
+  // visible on another connection yet, so the link is written on that same
+  // transaction.
+  await linkOccurrenceToExecution(client, occurrenceId, result.id);
 
   logger.info({ executionId: result.id, workflowId: wf.id }, 'the scheduled execution was created');
   return 1;

@@ -193,6 +193,7 @@ inside the API, not a separate service, so the API is the only browser-facing pr
 ```bash
 pnpm test:unit          # pure logic: state machine, mapping, schedules, SSRF, taxonomy
 pnpm test:integration   # the real API, the real database, the real engine
+pnpm test:e2e           # the real UI in a browser, against the real stack
 pnpm typecheck
 ```
 
@@ -203,6 +204,27 @@ simultaneous retry requests, immutable published versions, and workspace isolati
 
 The integration tests need PostgreSQL and Redis; they use a dedicated `s9_test` database so they never touch
 your development data.
+
+### End-to-end tests
+
+The Playwright suite drives the browser against a real stack: the API, its embedded authentication, the worker and
+the Next.js web app. It covers sign-in and sign-out, the workflow wizard, validation and publishing, a production run
+(with the worker executing it), a simulated test run, the execution history filters and the credential lifecycle.
+
+`pnpm test:e2e` rebuilds the dedicated `s9_e2e` database from the Drizzle baseline, seeds the demo workspace and
+flushes Redis database `1` before Playwright starts the servers on ports `4200` (API) and `3100` (web). The
+configuration lives in `.env.e2e`; variables already set in the process environment take precedence, so CI can point
+the suite at its own services. The development stack on ports `3000`/`4100` and Redis database `0` is never touched.
+
+```bash
+pnpm --filter @s9/web exec playwright install chromium   # once per machine
+pnpm test:e2e
+pnpm test:e2e:ui                                        # interactive mode
+```
+
+Playwright writes traces and screenshots to `packages/web/test-results` and the HTML report to
+`packages/web/playwright-report`.
+
 
 ---
 

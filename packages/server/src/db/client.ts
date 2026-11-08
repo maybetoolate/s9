@@ -62,8 +62,16 @@ export async function withAdvisoryLock<T>(
 
 /** Database time. Leases, schedules and deadlines use database time, not worker clocks. */
 export async function databaseNow(): Promise<Date> {
-  const result = await getDb().execute<{ now: Date }>(sql`SELECT now() AS now`);
-  return result.rows[0]?.now ?? new Date();
+  // Raw `execute` results bypass Drizzle's column encoders: a timestamp comes
+  // back as a string, not a `Date`. Reading epoch milliseconds keeps the value
+  // unambiguous and lets this function return a real `Date`, which every
+  // timestamp-bound query below relies on.
+  const result = await getDb().execute<{ now_ms: string }>(
+    sql`SELECT (extract(epoch from now()) * 1000)::bigint::text AS now_ms`,
+  );
+  const value = result.rows[0]?.now_ms;
+  const milliseconds = value === undefined ? Number.NaN : Number(value);
+  return Number.isFinite(milliseconds) ? new Date(milliseconds) : new Date();
 }
 
 /** Logs a failed rollback without masking the original error. */

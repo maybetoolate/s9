@@ -128,7 +128,7 @@ export function toCredentialDto(row: CredentialRow): CredentialDto {
 }
 
 export function toExecutionSummary(
-  row: ExecutionRow & { workflow_name?: string; version_number?: number },
+  row: ExecutionRow & { workflow_name?: string; version_number?: number | null },
 ): ExecutionSummaryDto {
   return {
     id: row.id,

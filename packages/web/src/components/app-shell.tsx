@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Activity, KeyRound, LayoutDashboard, ListChecks, Workflow } from 'lucide-react';
+import { SignOutButton } from '@/components/sign-out-button';
 import { cn } from '@/lib/utils';
 
 const NAVIGATION = [
@@ -56,14 +57,7 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
           </div>
           <div className="ml-auto flex items-center gap-3">
             {email ? <span className="text-sm text-[var(--color-muted-foreground)]">{email}</span> : null}
-            <form action="/api/auth/sign-out" method="post">
-              <button
-                type="submit"
-                className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-accent)]"
-              >
-                Sign out
-              </button>
-            </form>
+            <SignOutButton />
           </div>
         </header>
 

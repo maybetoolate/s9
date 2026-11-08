@@ -1,7 +1,7 @@
-import type { Context } from 'hono';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { LIMITS, redactString } from '@s9/core';
-import type { AppContext } from './context.js';
+import type { Context } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { LIMITS, redactString } from "@s9/core";
+import type { AppContext } from "./context.js";
 
 /**
  * The API error envelope.
@@ -19,29 +19,29 @@ export class ApiError extends Error {
     readonly details?: unknown,
   ) {
     super(message);
-    this.name = 'ApiError';
+    this.name = "ApiError";
   }
 
-  static badRequest(message: string, code = 'bad_request', details?: unknown): ApiError {
+  static badRequest(message: string, code = "bad_request", details?: unknown): ApiError {
     return new ApiError(400, code, message, details);
   }
-  static unauthorized(message = 'authentication required'): ApiError {
-    return new ApiError(401, 'unauthorized', message);
+  static unauthorized(message = "authentication required"): ApiError {
+    return new ApiError(401, "unauthorized", message);
   }
-  static forbidden(message = 'you do not have access to this resource'): ApiError {
-    return new ApiError(403, 'forbidden', message);
+  static forbidden(message = "you do not have access to this resource"): ApiError {
+    return new ApiError(403, "forbidden", message);
   }
-  static notFound(message = 'not found'): ApiError {
-    return new ApiError(404, 'not_found', message);
+  static notFound(message = "not found"): ApiError {
+    return new ApiError(404, "not_found", message);
   }
-  static conflict(message: string, code = 'conflict'): ApiError {
+  static conflict(message: string, code = "conflict"): ApiError {
     return new ApiError(409, code, message);
   }
-  static tooManyRequests(message: string, code = 'rate_limited'): ApiError {
+  static tooManyRequests(message: string, code = "rate_limited"): ApiError {
     return new ApiError(429, code, message);
   }
   static payloadTooLarge(message: string): ApiError {
-    return new ApiError(413, 'payload_too_large', message);
+    return new ApiError(413, "payload_too_large", message);
   }
 }
 
@@ -56,15 +56,19 @@ export interface ErrorBody {
 
 export function sendError(c: Context, error: unknown, requestId?: string): Response {
   const statusCode = error instanceof ApiError ? error.statusCode : 500;
-  const code = error instanceof ApiError ? error.code : 'internal_error';
+  const code = error instanceof ApiError ? error.code : "internal_error";
   const message =
-    error instanceof ApiError ? error.message : redactString((error as Error)?.message ?? 'an unexpected error occurred');
+    error instanceof ApiError
+      ? error.message
+      : redactString((error as Error)?.message ?? "an unexpected error occurred");
 
   const body: ErrorBody = {
     error: {
       code,
       message,
-      ...(error instanceof ApiError && error.details !== undefined ? { details: error.details } : {}),
+      ...(error instanceof ApiError && error.details !== undefined
+        ? { details: error.details }
+        : {}),
       ...(requestId ? { requestId } : {}),
     },
   };
@@ -84,7 +88,7 @@ export async function readJson(c: Context): Promise<unknown> {
   try {
     return JSON.parse(text);
   } catch {
-    throw new ApiError(400, 'invalid_json', 'the request body is not valid JSON');
+    throw new ApiError(400, "invalid_json", "the request body is not valid JSON");
   }
 }
 
@@ -99,38 +103,20 @@ export function jsonRoute(
   };
 }
 
-/**
- * Copies an upstream response into a Hono response, keeping `set-cookie`
- * headers separate instead of flattening them.
- */
-export async function relayResponse(upstream: Response): Promise<Response> {
-  const headers = new Headers();
-  upstream.headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie' || key.toLowerCase() === 'content-length') return;
-    headers.set(key, value);
-  });
-
-  for (const cookie of upstream.headers.getSetCookie?.() ?? []) {
-    headers.append('set-cookie', cookie);
-  }
-
-  return new Response(await upstream.arrayBuffer(), {
-    status: upstream.status,
-    headers,
-  });
-}
-
 export interface Pagination {
   page: number;
   pageSize: number;
 }
 
 export function parsePagination(query: Record<string, unknown>): Pagination {
-  const page = Number.parseInt(String(query.page ?? '1'), 10);
+  const page = Number.parseInt(String(query.page ?? "1"), 10);
   const pageSize = Number.parseInt(String(query.pageSize ?? String(LIMITS.defaultPageSize)), 10);
   return {
     page: Number.isFinite(page) && page > 0 ? page : 1,
-    pageSize: Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, LIMITS.maxPageSize) : LIMITS.defaultPageSize,
+    pageSize:
+      Number.isFinite(pageSize) && pageSize > 0
+        ? Math.min(pageSize, LIMITS.maxPageSize)
+        : LIMITS.defaultPageSize,
   };
 }
 
@@ -148,7 +134,7 @@ export function paginated<T>(data: T[], total: number, pagination: Pagination) {
 
 /** Parses an optional ISO date from a query parameter. */
 export function parseDate(value: unknown): Date | undefined {
-  if (typeof value !== 'string' || value.length === 0) return undefined;
+  if (typeof value !== "string" || value.length === 0) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
 }

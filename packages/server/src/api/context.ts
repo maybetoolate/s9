@@ -1,7 +1,7 @@
 import type { Context, Hono } from 'hono';
-import { validateSession, type SessionInfo } from '../auth/index.js';
-import { findMembership, listWorkspacesForUser } from '../db/repo.js';
-import { getDb } from '../db/client.js';
+import { getUserProfile, validateSession, type SessionInfo } from '../auth/index.js';
+import { addMembership, createWorkspace, findMembership, listWorkspacesForUser } from '../db/repo.js';
+import { getDb, withAdvisoryLock } from '../db/client.js';
 import { ApiError } from './http.js';
 
 /**
@@ -48,6 +48,33 @@ export async function getSession(c: AppContext): Promise<SessionInfo | null> {
 }
 
 /**
+ * Returns the user's workspace, provisioning one on first use.
+ *
+ * The MVP has one workspace per user, but an account created through sign-up
+ * has no membership yet. Provisioning here (rather than only at sign-up)
+ * repairs accounts that predate the rule and keeps every entry point
+ * consistent. The advisory lock serializes concurrent first requests so a new
+ * account never gets two workspaces.
+ */
+async function ensureWorkspace(userId: string) {
+  const db = getDb();
+  const existing = await listWorkspacesForUser(db, userId);
+  if (existing[0]) return existing[0];
+
+  const profile = await getUserProfile(userId);
+  const name = profile?.name ? `${profile.name}'s workspace` : 'My workspace';
+
+  return withAdvisoryLock(`workspace-provision:${userId}`, async (tx) => {
+    const rechecked = await listWorkspacesForUser(tx, userId);
+    if (rechecked[0]) return rechecked[0];
+
+    const workspace = await createWorkspace(tx, name);
+    await addMembership(tx, workspace.id, userId, 'owner');
+    return { ...workspace, role: 'owner' };
+  });
+}
+
+/**
  * Resolves the session, the workspace and the role of the caller.
  *
  * The MVP exposes one workspace per user, but every query still carries the
@@ -61,13 +88,9 @@ export async function requireContext(
   if (!session) throw ApiError.unauthorized();
 
   const db = getDb();
-  const workspaces = await listWorkspacesForUser(db, session.userId);
-  const first = workspaces[0];
-  if (!first) {
-    throw ApiError.forbidden('the account is not a member of any workspace');
-  }
+  const workspace = await ensureWorkspace(session.userId);
 
-  const membership = await findMembership(db, first.id, session.userId);
+  const membership = await findMembership(db, workspace.id, session.userId);
   const role = (membership?.role ?? 'viewer') as Role;
 
   for (const capability of options.capabilities ?? []) {
@@ -78,8 +101,8 @@ export async function requireContext(
 
   const context: RequestContext = {
     userId: session.userId,
-    workspaceId: first.id,
-    workspaceName: first.name,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
     role,
   };
   c.set('context', context);

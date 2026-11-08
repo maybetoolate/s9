@@ -1,5 +1,56 @@
 name: s9
 
+# Watch lists for `docker compose watch`.
+#
+# The images run compiled output, so a source change rebuilds the image
+# instead of syncing a file the process would never load. BuildKit's layer
+# cache keeps the rebuild cheap.
+x-watch-server: &watch-server
+  - action: rebuild
+    path: packages/server/src
+  - action: rebuild
+    path: packages/server/migrations
+  - action: rebuild
+    path: packages/server/package.json
+  - action: rebuild
+    path: packages/core/src
+  - action: rebuild
+    path: packages/core/package.json
+  - action: rebuild
+    path: package.json
+  - action: rebuild
+    path: pnpm-lock.yaml
+  - action: rebuild
+    path: pnpm-workspace.yaml
+  - action: rebuild
+    path: tsconfig.base.json
+
+x-watch-web: &watch-web
+  - action: rebuild
+    path: packages/web/src
+  - action: rebuild
+    path: packages/web/public
+  - action: rebuild
+    path: packages/web/package.json
+  - action: rebuild
+    path: packages/web/next.config.ts
+  - action: rebuild
+    path: packages/web/postcss.config.mjs
+  - action: rebuild
+    path: packages/web/tsconfig.json
+  - action: rebuild
+    path: packages/core/src
+  - action: rebuild
+    path: packages/core/package.json
+  - action: rebuild
+    path: package.json
+  - action: rebuild
+    path: pnpm-lock.yaml
+  - action: rebuild
+    path: pnpm-workspace.yaml
+  - action: rebuild
+    path: tsconfig.base.json
+
 services:
   # A local sink for the demo workflow. It accepts the notification delivery
   # and answers with 200, so the demo completes without an external service.
@@ -102,6 +153,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    develop:
+      watch: *watch-server
 
   worker:
     build:
@@ -130,6 +183,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    develop:
+      watch: *watch-server
 
   scheduler:
     build:
@@ -156,6 +211,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    develop:
+      watch: *watch-server
 
   web:
     build:
@@ -172,6 +229,8 @@ services:
       - "3000:3000"
     depends_on:
       - api
+    develop:
+      watch: *watch-web
 
 volumes:
   postgres-data:
