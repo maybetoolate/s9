@@ -61,7 +61,7 @@ export async function runMigrations(options: { log?: boolean } = {}): Promise<Mi
     // Serialise concurrent starts: the API and the auth service both apply
     // migrations. The lock is session-scoped and is released when the
     // connection closes, even if the process crashes.
-    await client.query('SELECT pg_advisory_lock(hashtext($1))', ['flowforge:migrations']);
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', ['s9:migrations']);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -96,7 +96,7 @@ export async function runMigrations(options: { log?: boolean } = {}): Promise<Mi
     }
   } finally {
     try {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['flowforge:migrations']);
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['s9:migrations']);
     } catch {
       // The connection is already broken; the lock is released with it.
     }

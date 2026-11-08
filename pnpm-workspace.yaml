@@ -1,5 +1,7 @@
 packages:
   - packages/*
+  # The Neovim plugin is not a Node package; keep it out of the workspace.
+  - '!packages/neovim'
 
 # pnpm 11 asks for an explicit decision before a dependency may run its
 # install scripts. Only the build tooling needs one.

@@ -4,7 +4,7 @@ import {
   validateDefinition,
   WorkflowDefinitionSchema,
   type WorkflowDefinition,
-} from '@flowforge/core';
+} from '@s9/core';
 
 /**
  * Validation rules from blueprint section 7:

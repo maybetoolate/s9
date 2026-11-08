@@ -8,7 +8,7 @@ import {
   localWallClockKey,
   nextOccurrences,
   resolveLocalTimeToInstant,
-} from '@flowforge/core';
+} from '@s9/core';
 
 /**
  * Schedule behaviour from blueprint section 6.2:

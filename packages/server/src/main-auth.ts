@@ -12,7 +12,7 @@ import { runMigrations } from './db/migrate.js';
  * schema when the instance is created, so the OAuth tables must already exist.
  */
 
-const logger = createLogger({ service: 'flowforge-auth' });
+const logger = createLogger({ service: 's9-auth' });
 
 async function main(): Promise<void> {
   if (process.env.SKIP_MIGRATIONS !== 'true') {

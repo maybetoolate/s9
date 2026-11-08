@@ -9,7 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
  * not need a build step first.
  */
 const alias = {
-  '@flowforge/core': resolve(here, '../core/src/index.ts'),
+  '@s9/core': resolve(here, '../core/src/index.ts'),
 };
 
 export default defineConfig({

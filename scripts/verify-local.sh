@@ -43,7 +43,7 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex |
 RESPONSE=$(curl -s -w '\n%{http_code}' -X POST "$API/webhooks/$SLUG" \
   -H 'content-type: application/json' \
   -H "idempotency-key: $KEY" \
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -H "x-s9-signature: t=$TS,v1=$SIG" \
   -d "$BODY")
 echo "$RESPONSE"
 EXECUTION_ID=$(echo "$RESPONSE" | head -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["executionId"])')
@@ -52,14 +52,14 @@ echo "== 5. duplicate delivery =="
 curl -s -o /dev/null -w 'status %{http_code}\n' -X POST "$API/webhooks/$SLUG" \
   -H 'content-type: application/json' \
   -H "idempotency-key: $KEY" \
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -H "x-s9-signature: t=$TS,v1=$SIG" \
   -d "$BODY"
 
 echo "== 6. bad signature =="
 curl -s -o /dev/null -w 'status %{http_code}\n' -X POST "$API/webhooks/$SLUG" \
   -H 'content-type: application/json' \
   -H "idempotency-key: bad-$KEY" \
-  -H "x-flowforge-signature: t=$TS,v1=$(printf '0%.0s' {1..64})" \
+  -H "x-s9-signature: t=$TS,v1=$(printf '0%.0s' {1..64})" \
   -d "$BODY"
 
 echo "== 7. wait for the worker =="

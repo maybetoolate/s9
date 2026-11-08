@@ -4,7 +4,7 @@ import {
   randomSlug,
   validateDefinition,
   type WorkflowDefinition,
-} from '@flowforge/core';
+} from '@s9/core';
 import { addMembership, createWorkflow, getDraft, insertWebhookEndpoint, listWorkspacesForUser } from './repo.js';
 import { closePool, getPool, withTransaction } from './pool.js';
 import { runMigrations } from './migrate.js';
@@ -28,7 +28,7 @@ const DEMO_DEFINITION: WorkflowDefinition = {
     samplePayload: {
       name: 'Ada Lovelace',
       email: 'ada@example.com',
-      message: 'I would like a demo of FlowForge.',
+      message: 'I would like a demo of s9.',
     },
   },
   steps: [
@@ -53,7 +53,7 @@ const DEMO_DEFINITION: WorkflowDefinition = {
       type: 'send_email',
       config: {
         provider: 'mailpit',
-        from: 'FlowForge <no-reply@flowforge.local>',
+        from: 's9 <no-reply@s9.local>',
         to: '{{trigger.body.email}}',
         subject: 'We received your message',
         body: 'Thanks for reaching out. We will get back to you shortly.',

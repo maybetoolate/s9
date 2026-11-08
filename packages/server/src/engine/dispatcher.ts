@@ -1,5 +1,5 @@
 import type { Queue } from 'bullmq';
-import { computeBackoffDelay, LIMITS } from '@flowforge/core';
+import { computeBackoffDelay, LIMITS } from '@s9/core';
 import {
   claimOutboxEvents,
   markOutboxFailed,

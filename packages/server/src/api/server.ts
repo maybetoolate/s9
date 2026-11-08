@@ -103,7 +103,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   });
 
   // ------------------------------------------------------------- health
-  app.get('/health', async () => ({ status: 'ok', service: 'flowforge-api' }));
+  app.get('/health', async () => ({ status: 'ok', service: 's9-api' }));
 
   app.get('/health/ready', async (_request, reply) => {
     const checks: Record<string, string> = {};

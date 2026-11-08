@@ -1,4 +1,4 @@
-import type { CredentialDto } from '@flowforge/core';
+import type { CredentialDto } from '@s9/core';
 import { api } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { CredentialsManager } from './credentials-manager';

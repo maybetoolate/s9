@@ -16,7 +16,7 @@ import { logger } from '../lib/logger.js';
  * reconciled the same way.
  */
 
-const CLIENT_NAME = 'FlowForge API';
+const CLIENT_NAME = 's9 API';
 
 /** Matches the OAuth provider's default client-secret storage format. */
 function hashClientSecret(secret: string): string {

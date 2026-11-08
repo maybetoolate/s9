@@ -1,10 +1,10 @@
-import type { ExecutionStatus, StepStatus, WorkflowStatus } from '@flowforge/core';
+import type { ExecutionStatus, StepStatus, WorkflowStatus } from '@s9/core';
 
 /**
  * Row shapes returned by the database.
  *
  * The repository layer speaks snake_case (as stored); the API maps them to the
- * camelCase DTOs in `@flowforge/core/contracts`.
+ * camelCase DTOs in `@s9/core/contracts`.
  */
 
 export interface WorkspaceRow {

@@ -5,7 +5,7 @@ import { auth } from '../../src/api/auth.js';
 import { closePool, getPool, withTransaction } from '../../src/db/pool.js';
 import { addMembership, createWorkflow, getPool as _getPool } from '../../src/db/repo.js';
 import { runExecutionContinuation } from '../../src/engine/execution-engine.js';
-import { createActionRegistry } from '../../src/actions/index.js';
+import { createActionExecutors, createActionRegistry } from '../../src/actions/index.js';
 import { dispatchOutboxOnce } from '../../src/engine/dispatcher.js';
 import { getExecutionQueue } from '../../src/queue/execution-queue.js';
 import { getRedis } from '../../src/queue/connection.js';
@@ -18,7 +18,8 @@ import type { FastifyInstance } from 'fastify';
  * and the real engine, so they exercise the same code paths as production.
  */
 
-export const registry = createActionRegistry();
+export const executors = createActionExecutors();
+export const registry = createActionRegistry(executors);
 
 export interface TestContext {
   app: FastifyInstance;
@@ -128,7 +129,7 @@ export async function createPublishedWorkflow(
 export async function runContinuation(executionId: string): Promise<string> {
   const result = await runExecutionContinuation(
     { executionId, runSequence: 0 },
-    { registry, workerId: 'test-worker', leaseDurationMs: 60_000 },
+    { registry, executors, workerId: 'test-worker', leaseDurationMs: 60_000 },
   );
   return result;
 }

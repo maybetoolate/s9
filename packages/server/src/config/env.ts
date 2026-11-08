@@ -40,11 +40,11 @@ const EnvSchema = z.object({
    */
   AUTH_INTERNAL_URL: z.string().default('http://localhost:4001'),
   /** OAuth2 client credentials the API uses to call the auth service. */
-  AUTH_CLIENT_ID: z.string().min(1).default('flowforge-api'),
+  AUTH_CLIENT_ID: z.string().min(1).default('s9-api'),
   AUTH_CLIENT_SECRET: z
     .string()
     .min(16, 'AUTH_CLIENT_SECRET must be at least 16 characters')
-    .default('flowforge-api-local-service-secret'),
+    .default('s9-api-local-service-secret'),
   /** Scopes the auth service may grant to the API client. */
   AUTH_CLIENT_SCOPES: z.string().default('users:read sessions:validate'),
   /** Lifetime of an issued service token, in seconds. */
@@ -54,7 +54,7 @@ const EnvSchema = z.object({
    * audience is this value, which keeps service tokens separate from tokens
    * issued for any other resource.
    */
-  AUTH_API_RESOURCE: z.string().min(1).default('urn:flowforge:api'),
+  AUTH_API_RESOURCE: z.string().min(1).default('urn:s9:api'),
   /**
    * OAuth issuer of the auth service. Defaults to the public auth base URL,
    * which is what Better-Auth stamps into every access token.
@@ -87,9 +87,9 @@ const EnvSchema = z.object({
   ALLOWED_PRIVATE_HOSTS: z.string().default(''),
 
   /** Where the seed/demo data is written to. */
-  SEED_WORKSPACE_NAME: z.string().default('FlowForge Demo'),
-  SEED_USER_EMAIL: z.string().default('operator@flowforge.local'),
-  SEED_USER_PASSWORD: z.string().default('flowforge-demo-password'),
+  SEED_WORKSPACE_NAME: z.string().default('s9 Demo'),
+  SEED_USER_EMAIL: z.string().default('operator@s9.local'),
+  SEED_USER_PASSWORD: z.string().default('s9-demo-password'),
   SEED_USER_NAME: z.string().default('Demo Operator'),
   /** The destination of the notification step in the demo workflow. */
   DEMO_NOTIFICATION_URL: z.string().default('http://localhost:8081/notify'),

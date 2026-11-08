@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
-import type { ExecutionDetailDto } from '@flowforge/core';
+import type { ExecutionDetailDto } from '@s9/core';
 import { api, ApiRequestError } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

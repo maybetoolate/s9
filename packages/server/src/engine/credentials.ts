@@ -1,7 +1,7 @@
 import type { Db } from '../db/repo.js';
 import { getCredential } from '../db/repo.js';
 import { decrypt } from '../lib/secrets.js';
-import { FlowForgeError } from '@flowforge/core';
+import { S9Error } from '@s9/core';
 
 /**
  * Credential resolution.
@@ -27,7 +27,7 @@ export async function resolveCredential(
 
   const row = await getCredential(db, workspaceId, credentialId);
   if (!row) {
-    throw FlowForgeError.validation(
+    throw S9Error.validation(
       'the referenced credential does not exist in this workspace',
       { credentialId },
     );
@@ -37,7 +37,7 @@ export async function resolveCredential(
   try {
     secret = decrypt(row.encrypted_secret);
   } catch (error) {
-    throw FlowForgeError.infrastructure('the credential could not be decrypted', error);
+    throw S9Error.infrastructure('the credential could not be decrypted', error);
   }
 
   return {

@@ -13,13 +13,13 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: flowforge
-          POSTGRES_PASSWORD: flowforge
-          POSTGRES_DB: flowforge
+          POSTGRES_USER: s9
+          POSTGRES_PASSWORD: s9
+          POSTGRES_DB: s9
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U flowforge -d flowforge"
+          --health-cmd "pg_isready -U s9 -d s9"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -36,9 +36,9 @@ jobs:
 
     env:
       NODE_ENV: test
-      DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
-      DATABASE_URL_TEST: postgres://flowforge:flowforge@localhost:5432/flowforge_test
-      DATABASE_ADMIN_URL: postgres://flowforge:flowforge@localhost:5432/postgres
+      DATABASE_URL: postgres://s9:s9@localhost:5432/s9
+      DATABASE_URL_TEST: postgres://s9:s9@localhost:5432/s9_test
+      DATABASE_ADMIN_URL: postgres://s9:s9@localhost:5432/postgres
       REDIS_URL: redis://localhost:6379
       SESSION_SECRET: ci-session-secret-at-least-32-characters-long
       ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
@@ -65,17 +65,31 @@ jobs:
         run: pnpm typecheck
 
       - name: Apply migrations to an empty database
-        run: pnpm --filter @flowforge/server db:migrate
+        run: pnpm --filter @s9/server db:migrate
         env:
-          DATABASE_URL: postgres://flowforge:flowforge@localhost:5432/flowforge
+          DATABASE_URL: postgres://s9:s9@localhost:5432/s9
 
       - name: Unit tests
-        run: pnpm --filter @flowforge/server test:unit
+        run: pnpm --filter @s9/server test:unit
 
       - name: Integration tests
-        run: pnpm --filter @flowforge/server test:integration
+        run: pnpm --filter @s9/server test:integration
 
       - name: Build
         run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+
+  neovim:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+
+      - name: Test the Neovim plugin
+        run: nvim --headless --clean -u NONE -l packages/neovim/tests/run.lua

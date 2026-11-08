@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { AlertTriangle, ArrowRight, Clock, Plus, Workflow } from 'lucide-react';
-import type { DashboardStatsDto } from '@flowforge/core';
+import type { DashboardStatsDto } from '@s9/core';
 import { api } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { Button } from '@/components/ui/button';

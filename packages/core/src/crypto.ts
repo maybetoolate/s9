@@ -93,7 +93,7 @@ export interface WebhookSignatureHeader {
   signatures: string[];
 }
 
-/** Parses an `X-FlowForge-Signature` header of the form `t=...,v1=...`. */
+/** Parses an `X-S9-Signature` header of the form `t=...,v1=...`. */
 export function parseSignatureHeader(header: string): WebhookSignatureHeader | null {
   const parts = header.split(',').map((part) => part.trim());
   let timestamp: number | undefined;

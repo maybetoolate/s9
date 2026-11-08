@@ -30,7 +30,7 @@ export interface ClassifiedError {
   details?: Record<string, unknown>;
 }
 
-export class FlowForgeError extends Error {
+export class S9Error extends Error {
   readonly errorClass: ErrorClass;
   readonly safeToRepeat: boolean;
   readonly details?: Record<string, unknown>;
@@ -43,7 +43,7 @@ export class FlowForgeError extends Error {
     options: { safeToRepeat?: boolean; details?: Record<string, unknown>; status?: number; retryAfterMs?: number; cause?: unknown } = {},
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
-    this.name = 'FlowForgeError';
+    this.name = 'S9Error';
     this.errorClass = errorClass;
     this.safeToRepeat = options.safeToRepeat ?? false;
     this.details = options.details;
@@ -63,28 +63,28 @@ export class FlowForgeError extends Error {
     return result;
   }
 
-  static validation(message: string, details?: Record<string, unknown>): FlowForgeError {
-    return new FlowForgeError('validation', message, { safeToRepeat: false, details });
+  static validation(message: string, details?: Record<string, unknown>): S9Error {
+    return new S9Error('validation', message, { safeToRepeat: false, details });
   }
 
-  static permanent(message: string, details?: Record<string, unknown>): FlowForgeError {
-    return new FlowForgeError('permanent_provider', message, { safeToRepeat: false, details });
+  static permanent(message: string, details?: Record<string, unknown>): S9Error {
+    return new S9Error('permanent_provider', message, { safeToRepeat: false, details });
   }
 
-  static transient(message: string, details?: Record<string, unknown>): FlowForgeError {
-    return new FlowForgeError('transient_provider', message, { safeToRepeat: true, details });
+  static transient(message: string, details?: Record<string, unknown>): S9Error {
+    return new S9Error('transient_provider', message, { safeToRepeat: true, details });
   }
 
-  static rateLimited(message: string, retryAfterMs: number | undefined, details?: Record<string, unknown>): FlowForgeError {
-    return new FlowForgeError('rate_limited', message, { safeToRepeat: true, retryAfterMs, details });
+  static rateLimited(message: string, retryAfterMs: number | undefined, details?: Record<string, unknown>): S9Error {
+    return new S9Error('rate_limited', message, { safeToRepeat: true, retryAfterMs, details });
   }
 
-  static timeout(message: string, safeToRepeat: boolean, details?: Record<string, unknown>): FlowForgeError {
-    return new FlowForgeError('timeout', message, { safeToRepeat, details });
+  static timeout(message: string, safeToRepeat: boolean, details?: Record<string, unknown>): S9Error {
+    return new S9Error('timeout', message, { safeToRepeat, details });
   }
 
-  static infrastructure(message: string, cause?: unknown): FlowForgeError {
-    return new FlowForgeError('internal_infrastructure', message, { safeToRepeat: true, cause });
+  static infrastructure(message: string, cause?: unknown): S9Error {
+    return new S9Error('internal_infrastructure', message, { safeToRepeat: true, cause });
   }
 }
 

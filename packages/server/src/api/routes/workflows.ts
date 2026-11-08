@@ -10,7 +10,7 @@ import {
   WorkflowDefinitionSchema,
   type TriggerType,
   type WorkflowDefinition,
-} from '@flowforge/core';
+} from '@s9/core';
 import { z } from 'zod';
 import {
   createWorkflow,
@@ -320,7 +320,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
     const payload = body.payload ?? {
       name: 'Ada Lovelace',
       email: 'ada@example.com',
-      message: 'A test delivery from the FlowForge operator console.',
+      message: 'A test delivery from the s9 operator console.',
     };
     const rawBody = JSON.stringify(payload);
     const timestamp = Date.now();
@@ -339,7 +339,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-flowforge-signature': signatureHeader,
+          'x-s9-signature': signatureHeader,
           'idempotency-key': `test-delivery:${randomUUID()}`,
         },
         body: rawBody,
@@ -378,7 +378,7 @@ export async function registerWorkflowRoutes(app: FastifyInstance): Promise<void
         url: `${env().API_PUBLIC_URL}/webhooks/${endpoint.slug}`,
         headers: {
           'content-type': 'application/json',
-          'x-flowforge-signature': signatureHeader,
+          'x-s9-signature': signatureHeader,
           'idempotency-key': '<a unique id per delivery>',
         },
         body: rawBody,
@@ -630,7 +630,7 @@ function buildInitialDefinition(triggerType: TriggerType, provided: unknown): Wo
         key: 'first_step',
         name: 'First step',
         type: 'notification' as const,
-        config: { channel: 'general', message: 'hello from FlowForge', webhookUrl: 'https://example.com/hook' },
+        config: { channel: 'general', message: 'hello from s9', webhookUrl: 'https://example.com/hook' },
       },
     ],
     policy: {

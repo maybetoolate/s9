@@ -14,13 +14,13 @@ COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 
-RUN pnpm install --frozen-lockfile --filter @flowforge/core --filter @flowforge/web
+RUN pnpm install --frozen-lockfile --filter @s9/core --filter @s9/web
 
 COPY packages/core packages/core
 COPY packages/web packages/web
 
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm --filter @flowforge/core build && pnpm --filter @flowforge/web build
+RUN pnpm --filter @s9/core build && pnpm --filter @s9/web build
 
 FROM node:22-alpine AS runtime
 

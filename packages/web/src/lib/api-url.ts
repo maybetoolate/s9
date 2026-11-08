@@ -1,5 +1,5 @@
 /**
- * The address of the FlowForge API.
+ * The address of the s9 API.
  *
  * `API_INTERNAL_URL` is the server-to-server address (the service name inside
  * a container network). `API_PUBLIC_URL` is the address a browser or a webhook

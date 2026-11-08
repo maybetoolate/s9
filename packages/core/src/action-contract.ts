@@ -67,7 +67,7 @@ export interface ActionExecutor {
   readonly redactionKeys: readonly string[];
   /** Validates a configuration object. */
   validateConfig(config: unknown): { ok: true; value: unknown } | { ok: false; message: string };
-  /** Executes the action. Throws a `FlowForgeError` with a classified error. */
+  /** Executes the action. Throws a `S9Error` with a classified error. */
   execute(context: ActionContext): Promise<ActionResult>;
   /** Maps an arbitrary thrown value onto the error taxonomy. */
   classifyError(error: unknown): ClassifiedError;

@@ -3,7 +3,7 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'FlowForge',
+  title: 's9',
   description: 'A small, self-hostable workflow engine with execution transparency and safe recovery.',
 };
 

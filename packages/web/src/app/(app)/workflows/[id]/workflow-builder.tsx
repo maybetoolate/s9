@@ -19,7 +19,7 @@ import {
   Send,
   Trash2,
 } from 'lucide-react';
-import type { ActionTypeDto, WorkflowDefinition, WorkflowDetailDto } from '@flowforge/core';
+import type { ActionTypeDto, WorkflowDefinition, WorkflowDetailDto } from '@s9/core';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, Label, Textarea } from '@/components/ui/input';
@@ -679,11 +679,11 @@ export function WorkflowBuilder({
                     </div>
 
                     <Alert variant="info" title="How to sign a delivery">
-                      The signature is not fetched from FlowForge: the sender computes it from the shared secret. Sign the
+                      The signature is not fetched from s9: the sender computes it from the shared secret. Sign the
                       exact bytes of the body with HMAC-SHA256 over{' '}
                       <span className="font-mono">&lt;timestamp&gt;.&lt;body&gt;</span>, where the timestamp is unix
                       milliseconds, and send the hex digest in the{' '}
-                      <span className="font-mono">X-FlowForge-Signature</span> header as{' '}
+                      <span className="font-mono">X-S9-Signature</span> header as{' '}
                       <span className="font-mono">t=&lt;ts&gt;,v1=&lt;hmac&gt;</span>. The timestamp tolerance is five
                       minutes.
                     </Alert>
@@ -697,7 +697,7 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex |
 curl -X POST "${workflow.webhookEndpoint.url}" \\
   -H "content-type: application/json" \\
   -H "idempotency-key: $(uuidgen)" \\
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \\
+  -H "x-s9-signature: t=$TS,v1=$SIG" \\
   -d "$BODY"`}
                     />
 
@@ -743,7 +743,7 @@ curl -X POST "${workflow.webhookEndpoint.url}" \\
           <DialogHeader>
             <DialogTitle>Store this signing secret now</DialogTitle>
             <DialogDescription>
-              The secret is shown exactly once. FlowForge stores only an encrypted copy and a hash, so it can never be
+              The secret is shown exactly once. s9 stores only an encrypted copy and a hash, so it can never be
               displayed again. If you lose it, rotate it.
             </DialogDescription>
           </DialogHeader>
@@ -756,7 +756,7 @@ curl -X POST "${workflow.webhookEndpoint.url}" \\
                 value={`curl -X POST ${secretEndpoint} \\
   -H "content-type: application/json" \\
   -H "idempotency-key: $(uuidgen)" \\
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \\
+  -H "x-s9-signature: t=$TS,v1=$SIG" \\
   -d '{"name":"Ada","email":"ada@example.com"}'`}
               />
             ) : null}
@@ -1178,7 +1178,7 @@ function StepConfig({
       {step.type === 'database_insert' ? (
         <>
           <Alert variant="info">
-            This action writes into the FlowForge managed contacts table. Values are parameterized and the
+            This action writes into the s9 managed contacts table. Values are parameterized and the
             <span className="font-mono"> dedupeKey </span>
             turns the write into an idempotent upsert.
           </Alert>

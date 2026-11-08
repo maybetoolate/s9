@@ -7,25 +7,26 @@ docker compose up -d postgres redis mailpit sink   # infrastructure
 pnpm install
 pnpm db:migrate
 pnpm db:seed
-pnpm dev                                            # api, worker, scheduler, web
+pnpm dev                                            # auth, api, worker, scheduler, web
 ```
 
 | Service | URL |
 | --- | --- |
 | Web app | <http://localhost:3000> |
 | API | <http://localhost:4100> |
+| Auth service | <http://localhost:4001> (internal; not published by Compose) |
 | Mail catcher | <http://localhost:8025> |
 | Demo sink | <http://localhost:8081> |
 | PostgreSQL | `localhost:55432` |
 | Redis | `localhost:56379` |
 
-Sign in with `operator@flowforge.local` / `flowforge-demo-password`.
+Sign in with `operator@s9.local` / `s9-demo-password`.
 
 ### Useful scripts
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm dev` | Start the API, the worker, the scheduler and the web app |
+| `pnpm dev` | Start the auth service, the API, the worker, the scheduler and the web app |
 | `pnpm db:migrate` | Apply the pending migrations |
 | `pnpm db:seed` | Create the demo workspace, the operator and the demo workflow |
 | `docker compose exec api node packages/server/dist/cli-seed.js` | The same, inside the container network |
@@ -43,8 +44,17 @@ Sign in with `operator@flowforge.local` / `flowforge-demo-password`.
 | `REDIS_URL` | — | Redis connection string (required) |
 | `API_PORT` | `4100` | The port the API listens on |
 | `API_PUBLIC_URL` | `http://localhost:4100` | Used to build the webhook URLs |
+| `API_INTERNAL_URL` | — | The web app's server-to-server address for the API (Compose: `http://api:4000`) |
+| `API_SELF_URL` | loopback on `API_PORT` | Address the API uses to deliver to its own webhook intake |
 | `WEB_PUBLIC_URL` | `http://localhost:3000` | The origin of the web app (the auth cookie origin) |
-| `SESSION_SECRET` | — | The session signing secret, at least 16 characters (required) |
+| `AUTH_PORT` | `4001` | The port the auth service listens on |
+| `AUTH_INTERNAL_URL` | `http://localhost:4001` | The API's address for the auth service (Compose: `http://auth:4001`) |
+| `AUTH_CLIENT_ID` | `s9-api` | OAuth2 client id the API uses for service calls |
+| `AUTH_CLIENT_SECRET` | dev default | OAuth2 client secret; set a real value in production |
+| `AUTH_CLIENT_SCOPES` | `users:read sessions:validate` | Scopes granted to the API |
+| `AUTH_SERVICE_TOKEN_TTL` | `300` | Lifetime of a service access token, in seconds |
+| `AUTH_API_RESOURCE` | `urn:s9:api` | Audience of the service access token |
+| `SESSION_SECRET` | — | The Better-Auth session signing secret, at least 16 characters (required) |
 | `ENCRYPTION_KEY` | — | Base64 encoded 32 byte master key (required) |
 | `ENCRYPTION_KEY_ID` | `key-1` | The key id stored beside each ciphertext |
 | `WORKER_ID` | `worker-1` | The identifier of this worker |
@@ -54,13 +64,13 @@ Sign in with `operator@flowforge.local` / `flowforge-demo-password`.
 | `RESEND_API_KEY` | — | Required for the `resend` provider |
 | `ALLOWED_PRIVATE_HOSTS` | — | Comma separated hostnames that may resolve to a private address |
 | `DEMO_NOTIFICATION_URL` | `http://localhost:8081/notify` | The destination of the demo workflow's notification step |
-| `DEMO_NOTIFICATION_URL` | `http://localhost:8081/notify` | The destination of the demo workflow |
 
-Generate the two secrets:
+Generate the secrets:
 
 ```bash
 openssl rand -base64 32   # ENCRYPTION_KEY
 openssl rand -hex 32      # SESSION_SECRET
+openssl rand -hex 32      # AUTH_CLIENT_SECRET (production)
 ```
 
 ## Troubleshooting
@@ -100,7 +110,7 @@ Wait for the reconciler (15 s) or restart the worker, which re-enqueues immediat
 ### The queue is stuck
 
 ```bash
-docker compose exec redis redis-cli -n 0 keys 'bull:flowforge-executions:*'
+docker compose exec redis redis-cli -n 0 keys 'bull:s9-executions:*'
 curl -s http://localhost:4100/api/ops/queue   # needs a session
 ```
 
@@ -124,6 +134,19 @@ address is read at runtime, so changing it only needs a restart of the web conta
 The session cookie is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL. A browser silently drops a
 `Secure` cookie on a plain HTTP origin, so a local deployment over HTTP has to keep `WEB_PUBLIC_URL` on `http://`.
 
+### The API returns `503 auth_unavailable`
+
+The API could not reach the auth service, or the service credentials were rejected. Check the internal address and the
+client credentials:
+
+```bash
+docker compose exec api printenv AUTH_INTERNAL_URL AUTH_CLIENT_ID AUTH_CLIENT_SCOPES
+curl -s http://localhost:4100/health/ready   # checks.auth must be "ok"
+```
+
+Inside Compose the auth address is `http://auth:4001`; on the host it is `http://localhost:4001`. The auth service also
+applies the migrations on start, so a fresh database needs it running before the first sign-in.
+
 ### The demo workflow fails on the notification step
 
 The demo workflow stores `DEMO_NOTIFICATION_URL` in its definition, so the value has to be reachable **from the
@@ -138,7 +161,7 @@ secret stays valid for one hour.
 
 ### How do I sign a webhook request?
 
-The signature is computed by the **sender**; FlowForge never hands it out. The sender holds the endpoint secret and
+The signature is computed by the **sender**; s9 never hands it out. The sender holds the endpoint secret and
 signs the request:
 
 ```
@@ -146,7 +169,7 @@ signature = HMAC_SHA256(secret, "<timestamp>.<raw body>")
 ```
 
 The timestamp is unix milliseconds, the signed payload is the timestamp, a dot and the **exact bytes of the body**, and
-the hex digest is sent as `X-FlowForge-Signature: t=<ts>,v1=<hex>`. The timestamp tolerance is five minutes.
+the hex digest is sent as `X-S9-Signature: t=<ts>,v1=<hex>`. The timestamp tolerance is five minutes.
 
 ```bash
 SECRET="whsec_..."
@@ -157,7 +180,7 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex |
 curl -X POST "$WEBHOOK_URL" \
   -H "content-type: application/json" \
   -H "idempotency-key: $(uuidgen)" \
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -H "x-s9-signature: t=$TS,v1=$SIG" \
   -d "$BODY"
 ```
 
@@ -198,16 +221,17 @@ The migrations are plain SQL files in `packages/server/migrations`, applied in l
 
 ### Retention
 
-- Published outbox rows are deleted after 7 days by the scheduler.
-- Execution payloads are kept for 30 days by default; the limit is a single constant in
-  `packages/core/src/limits.ts`.
+- Published outbox rows are deleted after 7 days by the scheduler (`LIMITS.outboxRetentionDays`; the window is a
+  constant, not a runtime setting).
+- Execution payload retention is declared as 30 days (`LIMITS.payloadRetentionDays`), but no cleanup job is implemented
+  yet. See [limitations.md](limitations.md).
 
 ### Backups
 
 `pg_dump` is enough for a development deployment:
 
 ```bash
-docker compose exec postgres pg_dump -U flowforge flowforge > flowforge-$(date +%F).sql
+docker compose exec postgres pg_dump -U s9 s9 > s9-$(date +%F).sql
 ```
 
 Restore with `psql`. A production deployment needs a tested restore procedure — see the production checklist in the
@@ -220,11 +244,11 @@ counters can be derived from them:
 
 | Metric | Source |
 | --- | --- |
-| `flowforge_executions_total` by status | The `executions` table |
-| `flowforge_step_duration_seconds` | `step_attempts.duration_ms` |
-| `flowforge_queue_depth` | `GET /api/ops/queue` |
-| `flowforge_outbox_lag_seconds` | The age of the oldest pending outbox row |
-| `flowforge_worker_heartbeat_age_seconds` | `worker_heartbeats.last_seen_at` |
+| `s9_executions_total` by status | The `executions` table |
+| `s9_step_duration_seconds` | `step_attempts.duration_ms` |
+| `s9_queue_depth` | `GET /api/ops/queue` |
+| `s9_outbox_lag_seconds` | The age of the oldest pending outbox row |
+| `s9_worker_heartbeat_age_seconds` | `worker_heartbeats.last_seen_at` |
 
 Suggested starting alerts:
 
@@ -245,5 +269,6 @@ Implemented here:
 - the audit log is append-only (a database trigger denies `UPDATE` and `DELETE`);
 - secrets are encrypted with a rotatable master key, and the key id is stored beside every ciphertext;
 - SSRF regression tests cover private ranges, redirects and IPv6;
-- the worker heartbeats, the API exposes health and readiness checks, and the queue has diagnostics;
-- the outbox rows are pruned and the retention window is configurable.
+- the worker heartbeats, the API exposes health and readiness checks (including the auth service), and the queue has
+  diagnostics;
+- the outbox rows are pruned after a fixed 7-day window; execution payload cleanup is not implemented.

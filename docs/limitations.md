@@ -1,17 +1,17 @@
 # Limitations
 
-What FlowForge deliberately does **not** do, and why. Everything here is a scope decision from the blueprint, not an
+What s9 deliberately does **not** do, and why. Everything here is a scope decision from the blueprint, not an
 oversight.
 
 ## Execution semantics
 
 ### Side effects are at-least-once, never exactly-once
 
-A job may be delivered more than once, so an external system can see a repeated request. FlowForge cannot prevent this:
+A job may be delivered more than once, so an external system can see a repeated request. s9 cannot prevent this:
 a provider that receives a request and then loses the response cannot be distinguished from a provider that never
 received it.
 
-What FlowForge does instead:
+What s9 does instead:
 
 - every side-effecting step carries a **stable idempotency key**, so a provider that supports one can collapse the
   repeat;
@@ -24,9 +24,9 @@ The system never claims exactly-once side effects.
 ### A timeout is not a failure
 
 A timeout proves that *no answer arrived*, not that the operation failed. Retrying a non-idempotent action blindly is
-how duplicate charges happen. FlowForge surfaces the uncertainty and asks the operator.
+how duplicate charges happen. s9 surfaces the uncertainty and asks the operator.
 
-### A duplicate delivery is harmless for FlowForge state, not for the provider
+### A duplicate delivery is harmless for s9 state, not for the provider
 
 The lease and the guarded transitions make a duplicate queue delivery harmless to the database. They cannot stop an
 external system from seeing a repeated request after a crash.
@@ -56,7 +56,7 @@ Out of scope for the MVP, on purpose:
 | Execution timeout | 10 minutes of active run time |
 | Attempts per step | 3 by default, 5 maximum |
 | Webhook deduplication window | 24 hours |
-| Payload retention | 30 days |
+| Payload retention | 30 days declared; the cleanup job is not implemented |
 | Concurrent runs per workflow | 1 by default |
 | Queued runs per workflow | 1000, then the intake answers `429` |
 
@@ -94,4 +94,4 @@ The blueprint's production readiness checklist is aspirational for this MVP. The
 | `jobId` is `execution_id:run_sequence` | `execution_id-run_sequence` | BullMQ rejects a custom job id that contains a colon. The shape is unchanged. |
 | The endpoint stores `secret_hash` | The endpoint stores the hash **and** the encrypted secret | The server has to recompute the HMAC to verify a signature, which a hash alone cannot do. |
 | The trigger adapter validates the payload against a schema | The payload must be a JSON object of at most 256 KB | There is no JSON schema in the trigger configuration; adding one is a scope decision, not a technical limit. |
-| The user model is owned by FlowForge | The identity tables are owned by the authentication library | The blueprint says to use a maintained authentication solution rather than inventing a protocol. |
+| The user model is owned by s9 | The identity tables are owned by the authentication library | The blueprint says to use a maintained authentication solution rather than inventing a protocol. |

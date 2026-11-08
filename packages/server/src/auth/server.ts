@@ -39,7 +39,7 @@ export async function buildAuthServer(): Promise<FastifyInstance> {
   await ensureServiceClient();
 
   const app = Fastify({
-    logger: loggerOptions({ service: 'flowforge-auth' }),
+    logger: loggerOptions({ service: 's9-auth' }),
     bodyLimit: 1024 * 1024,
     trustProxy: true,
   });
@@ -102,7 +102,7 @@ export async function buildAuthServer(): Promise<FastifyInstance> {
   });
 
   // ------------------------------------------------------------- health
-  app.get('/health', async () => ({ status: 'ok', service: 'flowforge-auth' }));
+  app.get('/health', async () => ({ status: 'ok', service: 's9-auth' }));
 
   app.get('/health/ready', async (request, reply) => {
     try {
@@ -193,7 +193,7 @@ export async function buildAuthServer(): Promise<FastifyInstance> {
 
 export async function startAuth(): Promise<void> {
   const config = env();
-  const serviceLogger = createLogger({ service: 'flowforge-auth' });
+  const serviceLogger = createLogger({ service: 's9-auth' });
   const app = await buildAuthServer();
 
   const shutdown = async (signal: string) => {

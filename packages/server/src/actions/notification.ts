@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   classifyHttpStatus,
-  FlowForgeError,
+  S9Error,
   LIMITS,
   NotificationConfigSchema,
   sanitizeErrorSummary,
@@ -11,7 +11,7 @@ import {
   type ActionExecutor,
   type ActionResult,
   type ClassifiedError,
-} from '@flowforge/core';
+} from '@s9/core';
 import { lookup } from 'node:dns/promises';
 import { allowedPrivateHosts } from '../lib/allowed-hosts.js';
 
@@ -30,111 +30,113 @@ const OutputSchema = z.object({
   status: z.number().optional(),
 });
 
-export function createNotificationExecutor(): ActionExecutor {
-  return {
-    type: 'notification',
-    configSchema: NotificationConfigSchema,
-    outputSchema: OutputSchema,
-    // Posting a message is a side effect that cannot be undone.
-    safeToRepeat: false,
-    redactionKeys: ['webhookUrl', 'credential'],
+export class NotificationExecutor implements ActionExecutor {
+  readonly type = 'notification';
+  readonly configSchema = NotificationConfigSchema;
+  readonly outputSchema = OutputSchema;
+  // Posting a message is a side effect that cannot be undone.
+  readonly safeToRepeat = false;
+  readonly redactionKeys = ['webhookUrl', 'credential'];
 
-    validateConfig(config: unknown) {
-      const parsed = NotificationConfigSchema.safeParse(config ?? {});
-      if (!parsed.success) {
-        return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
+  validateConfig(config: unknown): { ok: true; value: unknown } | { ok: false; message: string } {
+    const parsed = NotificationConfigSchema.safeParse(config ?? {});
+    if (!parsed.success) {
+      return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
+    }
+    if (!parsed.data.webhookUrl && !parsed.data.credentialId) {
+      return {
+        ok: false,
+        message: 'a webhook URL or a credential with the destination URL is required',
+      };
+    }
+    if (parsed.data.webhookUrl) {
+      const destination = validateHttpDestination(parsed.data.webhookUrl, {
+        allowedHosts: allowedPrivateHosts(),
+      });
+      if (!destination.ok) return { ok: false, message: destination.reason ?? 'the destination is not allowed' };
+    }
+    return { ok: true, value: parsed.data };
+  }
+
+  async execute(context: ActionContext): Promise<ActionResult> {
+    const config = NotificationConfigSchema.parse(context.input);
+    const destination = config.webhookUrl ?? context.credential?.secret;
+
+    if (!destination) {
+      throw S9Error.validation('the notification action has no destination URL');
+    }
+
+    if (context.simulate) {
+      return { output: { channel: config.channel, delivered: true, status: 200 } };
+    }
+
+    const validation = validateHttpDestination(destination, { allowedHosts: allowedPrivateHosts() });
+    if (!validation.ok) {
+      throw S9Error.validation(validation.reason ?? 'the destination is not allowed');
+    }
+
+    const resolved = await resolvePublicAddress(destination);
+    if (!resolved) {
+      throw S9Error.validation('the destination resolves only to blocked addresses');
+    }
+
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (config.idempotencyHeader) headers[config.idempotencyHeader] = context.idempotencyKey;
+
+    let response: Response;
+    try {
+      response = await fetch(destination, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ text: config.message, channel: config.channel }),
+        redirect: 'manual',
+        signal: context.signal,
+      });
+    } catch (error) {
+      const err = error as { name?: string; message?: string };
+      if (err.name === 'AbortError') {
+        throw S9Error.timeout('the notification request timed out', false);
       }
-      if (!parsed.data.webhookUrl && !parsed.data.credentialId) {
-        return {
-          ok: false,
-          message: 'a webhook URL or a credential with the destination URL is required',
-        };
+      throw new S9Error('transient_provider', sanitizeErrorSummary(err.message ?? 'the request failed'), {
+        safeToRepeat: false,
+      });
+    }
+
+    if (!response.ok) {
+      const errorClass = classifyHttpStatus(response.status);
+      const detail = sanitizeErrorSummary(await response.text().catch(() => ''), 300);
+      if (errorClass === 'rate_limited') {
+        throw S9Error.rateLimited('the notification destination replied with 429', undefined, { detail });
       }
-      if (parsed.data.webhookUrl) {
-        const destination = validateHttpDestination(parsed.data.webhookUrl, {
-          allowedHosts: allowedPrivateHosts(),
-        });
-        if (!destination.ok) return { ok: false, message: destination.reason ?? 'the destination is not allowed' };
-      }
-      return { ok: true, value: parsed.data };
-    },
-
-    async execute(context: ActionContext): Promise<ActionResult> {
-      const config = NotificationConfigSchema.parse(context.input);
-      const destination = config.webhookUrl ?? context.credential?.secret;
-
-      if (!destination) {
-        throw FlowForgeError.validation('the notification action has no destination URL');
-      }
-
-      if (context.simulate) {
-        return { output: { channel: config.channel, delivered: true, status: 200 } };
-      }
-
-      const validation = validateHttpDestination(destination, { allowedHosts: allowedPrivateHosts() });
-      if (!validation.ok) {
-        throw FlowForgeError.validation(validation.reason ?? 'the destination is not allowed');
-      }
-
-      const resolved = await resolvePublicAddress(destination);
-      if (!resolved) {
-        throw FlowForgeError.validation('the destination resolves only to blocked addresses');
-      }
-
-      const headers: Record<string, string> = { 'content-type': 'application/json' };
-      if (config.idempotencyHeader) headers[config.idempotencyHeader] = context.idempotencyKey;
-
-      let response: Response;
-      try {
-        response = await fetch(destination, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ text: config.message, channel: config.channel }),
-          redirect: 'manual',
-          signal: context.signal,
-        });
-      } catch (error) {
-        const err = error as { name?: string; message?: string };
-        if (err.name === 'AbortError') {
-          throw FlowForgeError.timeout('the notification request timed out', false);
-        }
-        throw new FlowForgeError('transient_provider', sanitizeErrorSummary(err.message ?? 'the request failed'), {
-          safeToRepeat: false,
-        });
-      }
-
-      if (!response.ok) {
-        const errorClass = classifyHttpStatus(response.status);
-        const detail = sanitizeErrorSummary(await response.text().catch(() => ''), 300);
-        if (errorClass === 'rate_limited') {
-          throw FlowForgeError.rateLimited('the notification destination replied with 429', undefined, { detail });
-        }
-        if (errorClass === 'transient_provider') {
-          throw new FlowForgeError('transient_provider', `the destination replied with ${response.status}`, {
-            safeToRepeat: false,
-            status: response.status,
-            details: { detail },
-          });
-        }
-        throw new FlowForgeError('permanent_provider', `the destination replied with ${response.status}`, {
+      if (errorClass === 'transient_provider') {
+        throw new S9Error('transient_provider', `the destination replied with ${response.status}`, {
           safeToRepeat: false,
           status: response.status,
           details: { detail },
         });
       }
-
-      return { output: { channel: config.channel, delivered: true, status: response.status }, status: response.status };
-    },
-
-    classifyError(error: unknown): ClassifiedError {
-      if (error instanceof FlowForgeError) return error.toClassified();
-      return {
-        class: 'transient_provider',
-        message: sanitizeErrorSummary((error as Error)?.message ?? 'the notification failed'),
+      throw new S9Error('permanent_provider', `the destination replied with ${response.status}`, {
         safeToRepeat: false,
-      };
-    },
-  };
+        status: response.status,
+        details: { detail },
+      });
+    }
+
+    return { output: { channel: config.channel, delivered: true, status: response.status }, status: response.status };
+  }
+
+  classifyError(error: unknown): ClassifiedError {
+    if (error instanceof S9Error) return error.toClassified();
+    return {
+      class: 'transient_provider',
+      message: sanitizeErrorSummary((error as Error)?.message ?? 'the notification failed'),
+      safeToRepeat: false,
+    };
+  }
+}
+
+export function createNotificationExecutor(): ActionExecutor {
+  return new NotificationExecutor();
 }
 
 /** Resolves the destination and rejects private addresses. */

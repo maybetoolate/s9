@@ -9,7 +9,7 @@ import { logger } from '../lib/logger.js';
  * Authentication.
  *
  * The session and password protocol comes from a maintained authentication
- * library; FlowForge does not implement its own. Authorization is applied at
+ * library; s9 does not implement its own. Authorization is applied at
  * the server boundary: hiding a control in the UI is not authorization.
  */
 
@@ -46,7 +46,7 @@ export const auth = betterAuth({
       resources: [
         {
           identifier: config.AUTH_API_RESOURCE,
-          name: 'FlowForge API',
+          name: 's9 API',
           allowedScopes: serviceScopes,
         },
       ],
@@ -56,7 +56,7 @@ export const auth = betterAuth({
     }),
   ],
   advanced: {
-    cookiePrefix: 'flowforge',
+    cookiePrefix: 's9',
     defaultCookieAttributes: {
       httpOnly: true,
       sameSite: 'lax',

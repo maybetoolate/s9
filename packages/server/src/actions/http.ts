@@ -1,9 +1,9 @@
 import { lookup, type LookupAllOptions } from 'node:dns';
-import { Agent, request, type Dispatcher } from 'undici';
+import { Agent, request } from 'undici';
 import { z } from 'zod';
 import {
   classifyHttpStatus,
-  FlowForgeError,
+  S9Error,
   HttpRequestConfigSchema,
   LIMITS,
   redactValue,
@@ -14,7 +14,7 @@ import {
   type ActionExecutor,
   type ActionResult,
   type ClassifiedError,
-} from '@flowforge/core';
+} from '@s9/core';
 import { allowedPrivateHosts } from '../lib/allowed-hosts.js';
 
 /**
@@ -80,150 +80,152 @@ function createSafeLookup(allowPrivateNetwork: boolean) {
   };
 }
 
-export function createHttpRequestExecutor(): ActionExecutor {
-  return {
-    type: 'http_request',
-    configSchema: HttpRequestConfigSchema,
-    outputSchema: OutputSchema,
-    // An HTTP request may have a side effect, so repeating it is unsafe
-    // unless the caller opted into an idempotency header.
-    safeToRepeat: false,
-    redactionKeys: ['headers', 'body', 'authorization'],
+export class HttpRequestExecutor implements ActionExecutor {
+  readonly type = 'http_request';
+  readonly configSchema = HttpRequestConfigSchema;
+  readonly outputSchema = OutputSchema;
+  // An HTTP request may have a side effect, so repeating it is unsafe
+  // unless the caller opted into an idempotency header.
+  readonly safeToRepeat = false;
+  readonly redactionKeys = ['headers', 'body', 'authorization'];
 
-    validateConfig(config: unknown) {
-      const parsed = HttpRequestConfigSchema.safeParse(config ?? {});
-      if (!parsed.success) {
-        return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
-      }
-      const destination = validateHttpDestination(parsed.data.url, {
-        allowPrivateNetwork: parsed.data.allowPrivateNetwork,
-        allowedHosts: allowedPrivateHosts(),
-      });
-      if (!destination.ok) {
-        return { ok: false, message: destination.reason ?? 'the destination is not allowed' };
-      }
-      return { ok: true, value: parsed.data };
-    },
+  validateConfig(config: unknown): { ok: true; value: unknown } | { ok: false; message: string } {
+    const parsed = HttpRequestConfigSchema.safeParse(config ?? {});
+    if (!parsed.success) {
+      return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
+    }
+    const destination = validateHttpDestination(parsed.data.url, {
+      allowPrivateNetwork: parsed.data.allowPrivateNetwork,
+      allowedHosts: allowedPrivateHosts(),
+    });
+    if (!destination.ok) {
+      return { ok: false, message: destination.reason ?? 'the destination is not allowed' };
+    }
+    return { ok: true, value: parsed.data };
+  }
 
-    async execute(context: ActionContext): Promise<ActionResult> {
-      const config = HttpRequestConfigSchema.parse(context.input);
-      const allowPrivateNetwork = config.allowPrivateNetwork === true;
+  async execute(context: ActionContext): Promise<ActionResult> {
+    const config = HttpRequestConfigSchema.parse(context.input);
+    const allowPrivateNetwork = config.allowPrivateNetwork === true;
 
-      const destination = validateHttpDestination(config.url, {
-        allowPrivateNetwork,
-        allowedHosts: allowedPrivateHosts(),
-      });
-      if (!destination.ok) {
-        throw FlowForgeError.validation(destination.reason ?? 'the destination is not allowed');
-      }
+    const destination = validateHttpDestination(config.url, {
+      allowPrivateNetwork,
+      allowedHosts: allowedPrivateHosts(),
+    });
+    if (!destination.ok) {
+      throw S9Error.validation(destination.reason ?? 'the destination is not allowed');
+    }
 
-      if (context.simulate) {
-        return {
-          output: {
-            status: 200,
-            body: { simulated: true, url: config.url, method: config.method },
-            truncated: false,
-          },
+    if (context.simulate) {
+      return {
+        output: {
           status: 200,
-        };
-      }
-
-      const headers: Record<string, string> = {};
-      for (const [key, value] of Object.entries(config.headers ?? {})) {
-        headers[key] = value;
-      }
-      if (context.credential?.secret) {
-        headers.authorization ??= context.credential.secret;
-      }
-      if (config.idempotencyHeader) {
-        headers[config.idempotencyHeader] = context.idempotencyKey;
-      }
-
-      let body: string | undefined;
-      if (config.body !== undefined && config.method !== 'GET') {
-        body = config.bodyType === 'json' ? config.body : config.body;
-        if (config.bodyType === 'json' && !headers['content-type']) headers['content-type'] = 'application/json';
-      }
-
-      const agent = new Agent({
-        connect: {
-          lookup: createSafeLookup(allowPrivateNetwork) as never,
+          body: { simulated: true, url: config.url, method: config.method },
+          truncated: false,
         },
+        status: 200,
+      };
+    }
+
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(config.headers ?? {})) {
+      headers[key] = value;
+    }
+    if (context.credential?.secret) {
+      headers.authorization ??= context.credential.secret;
+    }
+    if (config.idempotencyHeader) {
+      headers[config.idempotencyHeader] = context.idempotencyKey;
+    }
+
+    let body: string | undefined;
+    if (config.body !== undefined && config.method !== 'GET') {
+      body = config.bodyType === 'json' ? config.body : config.body;
+      if (config.bodyType === 'json' && !headers['content-type']) headers['content-type'] = 'application/json';
+    }
+
+    const agent = new Agent({
+      connect: {
+        lookup: createSafeLookup(allowPrivateNetwork) as never,
+      },
+    });
+
+    try {
+      const response = await request(config.url, {
+        method: config.method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+        dispatcher: agent,
+        // undici does not follow redirects unless the redirect interceptor
+        // is enabled, so a 3xx is returned to the action as-is.
+        headersTimeout: config.timeoutMs,
+        bodyTimeout: config.timeoutMs,
+        signal: context.signal,
       });
 
-      try {
-        const response = await request(config.url, {
-          method: config.method,
-          headers,
-          ...(body !== undefined ? { body } : {}),
-          dispatcher: agent,
-          // undici does not follow redirects unless the redirect interceptor
-          // is enabled, so a 3xx is returned to the action as-is.
-          headersTimeout: config.timeoutMs,
-          bodyTimeout: config.timeoutMs,
-          signal: context.signal,
-        });
-
-        const { text, truncated } = await readLimited(response.body, LIMITS.maxHttpResponseBytes);
-        const responseHeaders: Record<string, string> = {};
-        for (const [key, value] of Object.entries(response.headers)) {
-          if (typeof value === 'string' && !SENSITIVE_HEADERS.has(key.toLowerCase())) {
-            responseHeaders[key.toLowerCase()] = value;
-          }
+      const { text, truncated } = await readLimited(response.body, LIMITS.maxHttpResponseBytes);
+      const responseHeaders: Record<string, string> = {};
+      for (const [key, value] of Object.entries(response.headers)) {
+        if (typeof value === 'string' && !SENSITIVE_HEADERS.has(key.toLowerCase())) {
+          responseHeaders[key.toLowerCase()] = value;
         }
+      }
 
-        if (response.statusCode >= 400) {
-          const errorClass = classifyHttpStatus(response.statusCode);
-          const retryAfter = parseRetryAfter(response.headers['retry-after']);
-          const message = `the endpoint responded with ${response.statusCode}`;
-          if (errorClass === 'rate_limited') {
-            throw FlowForgeError.rateLimited(message, retryAfter, { status: response.statusCode });
-          }
-          if (errorClass === 'transient_provider') {
-            throw new FlowForgeError('transient_provider', message, {
-              safeToRepeat: isRepeatSafe(config.method, config.idempotencyHeader),
-              status: response.statusCode,
-            });
-          }
-          throw new FlowForgeError('permanent_provider', message, {
-            safeToRepeat: false,
+      if (response.statusCode >= 400) {
+        const errorClass = classifyHttpStatus(response.statusCode);
+        const retryAfter = parseRetryAfter(response.headers['retry-after']);
+        const message = `the endpoint responded with ${response.statusCode}`;
+        if (errorClass === 'rate_limited') {
+          throw S9Error.rateLimited(message, retryAfter, { status: response.statusCode });
+        }
+        if (errorClass === 'transient_provider') {
+          throw new S9Error('transient_provider', message, {
+            safeToRepeat: isRepeatSafe(config.method, config.idempotencyHeader),
             status: response.statusCode,
-            details: { body: sanitizeErrorSummary(text, 300) },
           });
         }
-
-        let parsedBody: unknown = text;
-        try {
-          parsedBody = text ? JSON.parse(text) : null;
-        } catch {
-          // Keep the raw text when the response is not JSON.
-        }
-
-        return {
-          output: {
-            status: response.statusCode,
-            body: parsedBody,
-            truncated,
-            headers: responseHeaders,
-          },
+        throw new S9Error('permanent_provider', message, {
+          safeToRepeat: false,
           status: response.statusCode,
-        };
-      } catch (error) {
-        throw wrapTransportError(error, config);
-      } finally {
-        await agent.close().catch(() => undefined);
+          details: { body: sanitizeErrorSummary(text, 300) },
+        });
       }
-    },
 
-    classifyError(error: unknown): ClassifiedError {
-      if (error instanceof FlowForgeError) return error.toClassified();
+      let parsedBody: unknown = text;
+      try {
+        parsedBody = text ? JSON.parse(text) : null;
+      } catch {
+        // Keep the raw text when the response is not JSON.
+      }
+
       return {
-        class: 'transient_provider',
-        message: sanitizeErrorSummary((error as Error)?.message ?? 'the request failed'),
-        safeToRepeat: false,
+        output: {
+          status: response.statusCode,
+          body: parsedBody,
+          truncated,
+          headers: responseHeaders,
+        },
+        status: response.statusCode,
       };
-    },
-  };
+    } catch (error) {
+      throw wrapTransportError(error, config);
+    } finally {
+      await agent.close().catch(() => undefined);
+    }
+  }
+
+  classifyError(error: unknown): ClassifiedError {
+    if (error instanceof S9Error) return error.toClassified();
+    return {
+      class: 'transient_provider',
+      message: sanitizeErrorSummary((error as Error)?.message ?? 'the request failed'),
+      safeToRepeat: false,
+    };
+  }
+}
+
+export function createHttpRequestExecutor(): ActionExecutor {
+  return new HttpRequestExecutor();
 }
 
 function isRepeatSafe(method: string, idempotencyHeader: string | undefined): boolean {
@@ -242,7 +244,7 @@ function parseRetryAfter(value: string | string[] | undefined): number | undefin
 }
 
 function wrapTransportError(error: unknown, config: z.infer<typeof HttpRequestConfigSchema>): Error {
-  if (error instanceof FlowForgeError) return error;
+  if (error instanceof S9Error) return error;
 
   const err = error as { name?: string; code?: string; message?: string; cause?: { code?: string } };
   const code = err.code ?? err.cause?.code;
@@ -250,23 +252,23 @@ function wrapTransportError(error: unknown, config: z.infer<typeof HttpRequestCo
   if (err.name === 'AbortError' || code === 'ABORT_ERR' || code === 'UND_ERR_ABORTED') {
     // A timeout does not prove the remote operation failed. Repeating a
     // non-idempotent request could duplicate the side effect.
-    return FlowForgeError.timeout(
+    return S9Error.timeout(
       `the request did not complete within ${config.timeoutMs}ms`,
       isRepeatSafe(config.method, config.idempotencyHeader),
     );
   }
   if (code === 'EHOSTUNREACH' || code === 'ENOTFOUND' || code === 'ECONNREFUSED') {
-    return new FlowForgeError('transient_provider', `the endpoint could not be reached (${code})`, {
+    return new S9Error('transient_provider', `the endpoint could not be reached (${code})`, {
       safeToRepeat: isRepeatSafe(config.method, config.idempotencyHeader),
     });
   }
   if (code === 'UND_ERR_RESPONSE_TIMEOUT' || code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT') {
-    return FlowForgeError.timeout(
+    return S9Error.timeout(
       `the request timed out (${code})`,
       isRepeatSafe(config.method, config.idempotencyHeader),
     );
   }
-  return new FlowForgeError('transient_provider', sanitizeErrorSummary(err.message ?? 'the request failed'), {
+  return new S9Error('transient_provider', sanitizeErrorSummary(err.message ?? 'the request failed'), {
     safeToRepeat: isRepeatSafe(config.method, config.idempotencyHeader),
   });
 }

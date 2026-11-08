@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   buildStepIdempotencyKey,
   computeBackoffDelay,
-  FlowForgeError,
+  S9Error,
   interpolateValue,
   isRetryableClass,
   LIMITS,
@@ -10,12 +10,12 @@ import {
   sanitizeErrorSummary,
   VariableResolutionError,
   type ActionContext,
-  type ActionExecutor,
   type ActionRegistry,
+  type ActionType,
   type ClassifiedError,
   type VariableContext,
   type WorkflowDefinition,
-} from '@flowforge/core';
+} from '@s9/core';
 import {
   countConsumedAttempts,
   createStepExecutions,
@@ -35,6 +35,7 @@ import { executionLogger } from '../lib/logger.js';
 import { resolveCredential } from './credentials.js';
 import { scheduleContinuation } from './execution-service.js';
 import type { ExecutionJobData } from '../queue/execution-queue.js';
+import { dispatchClassifyError, dispatchExecute, type ActionExecutors } from '../actions/index.js';
 
 /**
  * The execution engine.
@@ -49,6 +50,7 @@ import type { ExecutionJobData } from '../queue/execution-queue.js';
 
 export interface EngineOptions {
   registry: ActionRegistry;
+  executors: ActionExecutors;
   workerId: string;
   leaseDurationMs: number;
 }
@@ -66,7 +68,7 @@ export async function runExecutionContinuation(
   job: ExecutionJobData,
   options: EngineOptions,
 ): Promise<ContinuationResult> {
-  const { registry, workerId, leaseDurationMs } = options;
+  const { registry, executors, workerId, leaseDurationMs } = options;
   const db = getPool();
   const log = executionLogger({ executionId: job.executionId, workerId });
 
@@ -134,6 +136,7 @@ export async function runExecutionContinuation(
       isTest: execution.is_test,
       leaseToken,
       registry,
+      executors,
       workerId,
     });
 
@@ -238,9 +241,10 @@ async function runSteps(input: {
   isTest: boolean;
   leaseToken: string;
   registry: ActionRegistry;
+  executors: ActionExecutors;
   workerId: string;
 }): Promise<StepOutcome> {
-  const { db, executionId, definition, registry } = input;
+  const { db, executionId, definition, registry, executors } = input;
   const policy = definition.policy;
   const executionStartedAt = Date.now();
 
@@ -287,7 +291,6 @@ async function runSteps(input: {
       throw error;
     }
 
-    const executor = registry.get(step.type);
     const attemptsConsumed = await countConsumedAttempts(db, stepRow.id);
     const attemptNumber = attemptsConsumed + 1;
     const attemptsLeft = attemptsConsumed < policy.retry.maxAttempts;
@@ -346,16 +349,16 @@ async function runSteps(input: {
         ...(credential ? { credential } : {}),
       };
 
-      result = await executor.execute(actionContext);
+      result = await dispatchExecute(executors, step.type, actionContext);
 
       const validation = registry.validateOutput(step.type, result.output);
       if (!validation.ok) {
-        throw FlowForgeError.validation(`the action returned an unexpected output: ${validation.message}`);
+        throw S9Error.validation(`the action returned an unexpected output: ${validation.message}`);
       }
     } catch (error) {
       clearTimeout(timer);
       const durationMs = Date.now() - startedAt;
-      const classified = classifyFailure(executor, error);
+      const classified = classifyFailure(executors, step.type, error);
 
       if (classified.class === 'internal_infrastructure') {
         // Infrastructure failures do not consume an attempt: the job is
@@ -540,10 +543,14 @@ async function buildVariableContext(
   };
 }
 
-function classifyFailure(executor: ActionExecutor, error: unknown): ClassifiedError {
-  if (error instanceof FlowForgeError) return error.toClassified();
+function classifyFailure(
+  executors: ActionExecutors,
+  type: ActionType,
+  error: unknown,
+): ClassifiedError {
+  if (error instanceof S9Error) return error.toClassified();
   try {
-    return executor.classifyError(error);
+    return dispatchClassifyError(executors, type, error);
   } catch {
     return {
       class: 'permanent_provider',

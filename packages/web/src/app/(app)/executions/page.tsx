@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { ExecutionSummaryDto, Paginated } from '@flowforge/core';
+import type { ExecutionSummaryDto, Paginated } from '@s9/core';
 import { api } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { Card, CardContent } from '@/components/ui/card';

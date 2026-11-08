@@ -6,7 +6,7 @@ import {
   LIMITS,
   nextOccurrences,
   type ScheduleOccurrence,
-} from '@flowforge/core';
+} from '@s9/core';
 import {
   insertScheduleOccurrence,
   linkOccurrenceToExecution,

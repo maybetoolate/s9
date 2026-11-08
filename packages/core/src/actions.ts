@@ -48,7 +48,7 @@ export const EmailConfigSchema = z.object({
   executeForReal: z.boolean().optional(),
 });
 
-/** Database insert action (FlowForge managed contacts table only). */
+/** Database insert action (s9 managed contacts table only). */
 export const DatabaseInsertConfigSchema = z.object({
   table: z.literal('contacts').default('contacts'),
   values: z.object({
@@ -115,7 +115,7 @@ export const ACTION_METADATA: Record<ActionType, ActionMetadata> = {
   database_insert: {
     type: 'database_insert',
     label: 'Database insert',
-    description: 'Insert a row into the FlowForge managed contacts table using a parameterized upsert.',
+    description: 'Insert a row into the s9 managed contacts table using a parameterized upsert.',
     configSchema: DatabaseInsertConfigSchema,
     requiredFields: ['values'],
     defaultSafeToRepeat: true,

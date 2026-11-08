@@ -25,19 +25,19 @@ if (existsSync(rootEnvFile)) {
   process.loadEnvFile(rootEnvFile);
 }
 
-const adminUrl = process.env.DATABASE_ADMIN_URL ?? 'postgres://flowforge:flowforge@localhost:55432/postgres';
-const testUrl = process.env.DATABASE_URL_TEST ?? 'postgres://flowforge:flowforge@localhost:55432/flowforge_test';
+const adminUrl = process.env.DATABASE_ADMIN_URL ?? 'postgres://s9:s9@localhost:55432/postgres';
+const testUrl = process.env.DATABASE_URL_TEST ?? 'postgres://s9:s9@localhost:55432/s9_test';
 
 process.env.DATABASE_URL = testUrl;
 process.env.NODE_ENV = 'test';
 process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'silent';
 
 // Service-to-service credentials used by the API in the tests.
-process.env.AUTH_CLIENT_ID = 'flowforge-api';
+process.env.AUTH_CLIENT_ID = 's9-api';
 process.env.AUTH_CLIENT_SECRET = 'integration-service-client-secret';
 process.env.AUTH_CLIENT_SCOPES = 'users:read sessions:validate';
 process.env.AUTH_SERVICE_TOKEN_TTL = '300';
-process.env.AUTH_API_RESOURCE = 'urn:flowforge:api';
+process.env.AUTH_API_RESOURCE = 'urn:s9:api';
 process.env.WEB_PUBLIC_URL = process.env.WEB_PUBLIC_URL ?? 'http://localhost:3000';
 
 // Create the test database when it does not exist yet.
@@ -46,9 +46,9 @@ process.env.WEB_PUBLIC_URL = process.env.WEB_PUBLIC_URL ?? 'http://localhost:300
   const client = new Client({ connectionString: adminUrl });
   await client.connect();
   try {
-    const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', ['flowforge_test']);
+    const existing = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', ['s9_test']);
     if (existing.rowCount === 0) {
-      await client.query('CREATE DATABASE flowforge_test');
+      await client.query('CREATE DATABASE s9_test');
     }
   } finally {
     await client.end();

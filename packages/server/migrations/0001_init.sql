@@ -1,4 +1,4 @@
--- FlowForge initial schema.
+-- s9 initial schema.
 --
 -- Blueprint section 10 (data model blueprint) plus the "data model additions"
 -- listed at the end of that section: WorkflowDraft, WebhookEndpoint,
@@ -292,7 +292,7 @@ CREATE TABLE worker_heartbeats (
   metadata            jsonb       NOT NULL DEFAULT '{}'::jsonb
 );
 
--- The demo database action writes into this FlowForge managed table only.
+-- The demo database action writes into this s9 managed table only.
 CREATE TABLE contacts (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name       text,

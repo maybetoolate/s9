@@ -3,7 +3,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@flowforge/core": ["packages/core/src/index.ts"]
+      "@s9/core": ["packages/core/src/index.ts"]
     },
     "noEmit": true
   },

@@ -1,5 +1,5 @@
 import type { FastifyReply } from 'fastify';
-import { LIMITS, redactString } from '@flowforge/core';
+import { LIMITS, redactString } from '@s9/core';
 
 /**
  * The API error envelope.

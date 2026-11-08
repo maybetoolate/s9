@@ -7,7 +7,7 @@ import {
   parseActionConfig,
   validateDefinition,
   type ActionType,
-} from '@flowforge/core';
+} from '@s9/core';
 import {
   countOutboxByStatus,
   findCredentialReferences,
@@ -396,7 +396,7 @@ function exampleFor(type: ActionType): Record<string, unknown> {
     case 'send_email':
       return {
         provider: 'mailpit',
-        from: 'FlowForge <no-reply@flowforge.local>',
+        from: 's9 <no-reply@s9.local>',
         to: '{{trigger.body.email}}',
         subject: 'We received your message',
         body: 'Thanks for reaching out.',

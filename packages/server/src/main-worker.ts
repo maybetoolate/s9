@@ -4,7 +4,7 @@ import { logger } from './lib/logger.js';
 import { closePool, getPool } from './db/pool.js';
 import { closeRedis, getBlockingRedis, getRedis } from './queue/connection.js';
 import { EXECUTION_QUEUE, getExecutionQueue, type ExecutionJobData } from './queue/execution-queue.js';
-import { createActionRegistry } from './actions/index.js';
+import { createActionExecutors, createActionRegistry } from './actions/index.js';
 import { runExecutionContinuation } from './engine/execution-engine.js';
 import { dispatchOutboxOnce } from './engine/dispatcher.js';
 import { reconcileOnce } from './engine/reconciler.js';
@@ -20,7 +20,38 @@ import { upsertHeartbeat } from './db/repo.js';
 
 const config = env();
 const workerId = config.WORKER_ID;
-const registry = createActionRegistry();
+const executors = createActionExecutors();
+const registry = createActionRegistry(executors);
+
+function runDispatcherTick(queue: ReturnType<typeof getExecutionQueue>): void {
+  void dispatchOutboxOnce(queue)
+    .then((result) => {
+      if (result.claimed > 0) {
+        logger.info(result, 'the outbox dispatcher published work');
+      }
+    })
+    .catch((error) => {
+      logger.error({ err: error }, 'the outbox dispatcher failed');
+    });
+}
+
+function runReconcilerTick(): void {
+  void reconcileOnce()
+    .then((result) => {
+      if (result.staleRecovered > 0 || result.requeued > 0) {
+        logger.info(result, 'the reconciler recovered work');
+      }
+    })
+    .catch((error) => {
+      logger.error({ err: error }, 'the reconciler failed');
+    });
+}
+
+function runHeartbeatTick(): void {
+  void upsertHeartbeat(getPool(), { workerId, currentExecutionId: null }).catch((error) => {
+    logger.error({ err: error }, 'the worker heartbeat failed');
+  });
+}
 
 async function main(): Promise<void> {
   const redis = getRedis();
@@ -32,6 +63,7 @@ async function main(): Promise<void> {
     async (job: Job<ExecutionJobData>) => {
       await runExecutionContinuation(job.data, {
         registry,
+        executors,
         workerId,
         leaseDurationMs: 180_000,
       });
@@ -54,37 +86,13 @@ async function main(): Promise<void> {
   });
 
   // The outbox dispatcher publishes the queued work.
-  const dispatcherTimer = setInterval(() => {
-    void dispatchOutboxOnce(queue)
-      .then((result) => {
-        if (result.claimed > 0) {
-          logger.info(result, 'the outbox dispatcher published work');
-        }
-      })
-      .catch((error) => {
-        logger.error({ err: error }, 'the outbox dispatcher failed');
-      });
-  }, 1_000);
+  const dispatcherTimer = setInterval(() => runDispatcherTick(queue), 1_000);
 
   // The reconciler recovers stale runs and re-enqueues lost work.
-  const reconcilerTimer = setInterval(() => {
-    void reconcileOnce()
-      .then((result) => {
-        if (result.staleRecovered > 0 || result.requeued > 0) {
-          logger.info(result, 'the reconciler recovered work');
-        }
-      })
-      .catch((error) => {
-        logger.error({ err: error }, 'the reconciler failed');
-      });
-  }, 15_000);
+  const reconcilerTimer = setInterval(runReconcilerTick, 15_000);
 
   // The heartbeat tells the operations endpoints that this worker is alive.
-  const heartbeatTimer = setInterval(() => {
-    void upsertHeartbeat(getPool(), { workerId, currentExecutionId: null }).catch((error) => {
-      logger.error({ err: error }, 'the worker heartbeat failed');
-    });
-  }, 10_000);
+  const heartbeatTimer = setInterval(runHeartbeatTick, 10_000);
 
   logger.info(
     { workerId, concurrency: config.WORKER_CONCURRENCY, queue: EXECUTION_QUEUE },

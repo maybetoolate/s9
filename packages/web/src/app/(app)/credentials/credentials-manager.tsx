@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import type { CredentialDto } from '@flowforge/core';
+import type { CredentialDto } from '@s9/core';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, Label } from '@/components/ui/input';

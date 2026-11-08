@@ -29,7 +29,7 @@ stalled-job detection is a secondary signal, and the reconciler is what actually
 - Redis holds no business state. PostgreSQL is the system of record; losing Redis costs latency, not data. The
   reconciler re-enqueues the queued executions that were already published.
 - The delayed retry is durable: the delay lives in the outbox row until the dispatcher publishes it.
-- A queue delivery is at-least-once. The lease and the guarded transitions make that harmless for FlowForge state.
+- A queue delivery is at-least-once. The lease and the guarded transitions make that harmless for s9 state.
 - BullMQ rejects a custom job id that contains a colon, so the separator is a dash. The shape
   (`<execution id><separator><run sequence>`) is unchanged from the blueprint.
 - One Redis connection is enough for the MVP. Redis Cluster or a managed queue would be a later change.

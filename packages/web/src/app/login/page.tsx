@@ -16,8 +16,8 @@ import { Alert } from '@/components/ui/feedback';
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [email, setEmail] = useState('operator@flowforge.local');
-  const [password, setPassword] = useState('flowforge-demo-password');
+  const [email, setEmail] = useState('operator@s9.local');
+  const [password, setPassword] = useState('s9-demo-password');
   const [name, setName] = useState('Demo Operator');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -61,7 +61,7 @@ export default function LoginPage() {
           <span className="flex size-10 items-center justify-center rounded-lg bg-[var(--color-primary)] text-[var(--color-primary-foreground)]">
             <Activity className="size-5" />
           </span>
-          <h1 className="text-xl font-semibold tracking-tight">FlowForge</h1>
+          <h1 className="text-xl font-semibold tracking-tight">s9</h1>
           <p className="text-sm text-[var(--color-muted-foreground)]">
             Configure the process once, run it repeatedly, and understand every run.
           </p>
@@ -128,8 +128,8 @@ export default function LoginPage() {
           </Button>
 
           <p className="text-center text-xs text-[var(--color-muted-foreground)]">
-            The demo workspace uses <span className="font-mono">operator@flowforge.local</span> /{' '}
-            <span className="font-mono">flowforge-demo-password</span>.
+            The demo workspace uses <span className="font-mono">operator@s9.local</span> /{' '}
+            <span className="font-mono">s9-demo-password</span>.
           </p>
         </form>
       </div>

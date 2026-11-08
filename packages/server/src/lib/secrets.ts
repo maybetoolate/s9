@@ -1,4 +1,4 @@
-import { decodeMasterKey, decryptSecret, encryptSecret, type EncryptedSecret } from '@flowforge/core';
+import { decodeMasterKey, decryptSecret, encryptSecret, type EncryptedSecret } from '@s9/core';
 import { env } from '../config/env.js';
 
 /**

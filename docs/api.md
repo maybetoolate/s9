@@ -1,14 +1,16 @@
 # API reference
 
-The API is REST with JSON. Every response has the same shape, and every error carries a machine readable code and a
-request id for support.
+The API is REST with JSON. Errors share one envelope, and every response carries a request id for support.
 
-Base URL in development: `http://localhost:4100`.
+Base URL in development: `http://localhost:4100`. From the web app, call the same paths on `http://localhost:3000`;
+the web app proxies them to the API.
 
 ## Authentication
 
-Authentication is handled by a maintained authentication library (Better-Auth); FlowForge does not implement its own
-password or session protocol.
+Authentication is handled by a maintained authentication library (Better-Auth); s9 does not implement its own
+password or session protocol. It runs in a separate auth service that owns the auth tables. The API keeps the public
+`/api/auth/*` surface and proxies it, so the endpoints below do not change when the deployment moves the auth service
+behind the internal network.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -17,8 +19,12 @@ password or session protocol.
 | `POST /api/auth/sign-out` | End the session |
 | `GET /api/auth/get-session` | The current session |
 
-The session is a `HttpOnly` cookie named `flowforge.session_token`. Every request below is authorized against the
-workspace of the caller; hiding a control in the UI is not authorization.
+The session is a `HttpOnly` cookie named `s9.session_token`. The API validates it with the auth service on every
+request; clients only ever send the cookie. Every request below is authorized against the workspace of the caller;
+hiding a control in the UI is not authorization.
+
+Service-to-service calls between the API and the auth service use the OAuth2 client-credentials grant. Those internal
+endpoints are not part of the public API.
 
 ## Conventions
 
@@ -52,6 +58,8 @@ workspace of the caller; hiding a control in the UI is not authorization.
 | `POST` | `/api/workflows/:id/validate` | `{ valid, issues[] }` |
 | `POST` | `/api/workflows/:id/publish` | Creates an immutable version |
 | `POST` | `/api/workflows/:id/webhook/test-delivery` | Signs and sends a delivery to the endpoint, and returns the exact request |
+| `GET` | `/api/workflows/:id/webhook` | The endpoint metadata: URL, signature requirement and rotation state |
+| `POST` | `/api/workflows/:id/webhook/rotate` | Rotates the signing secret; the new secret is returned once |
 | `POST` | `/api/workflows/:id/pause` | Stops new runs, in-flight runs finish |
 | `POST` | `/api/workflows/:id/resume` | |
 | `POST` | `/api/workflows/:id/archive` | Keeps the history and the versions |
@@ -125,7 +133,7 @@ This endpoint is public. It is the most security sensitive surface in the produc
 
 | Header | Meaning |
 | --- | --- |
-| `X-FlowForge-Signature` | `t=<unix-ms>,v1=<hmac-hex>` — required when the endpoint requires a signature |
+| `X-S9-Signature` | `t=<unix-ms>,v1=<hmac-hex>` — required when the endpoint requires a signature |
 | `Idempotency-Key` | The deduplication key. `X-Event-Id` is accepted as an alternative. |
 
 **Signature**
@@ -142,7 +150,7 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex |
 curl -X POST "http://localhost:4100/webhooks/<slug>" \
   -H "content-type: application/json" \
   -H "idempotency-key: event-1" \
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -H "x-s9-signature: t=$TS,v1=$SIG" \
   -d "$BODY"
 ```
 
@@ -229,6 +237,7 @@ not two.
 | Backoff | 5 s base, 5 min cap, with jitter |
 | Webhook deduplication window | 24 hours |
 | Signature timestamp tolerance | 5 minutes |
-| Payload retention | 30 days |
+| Payload retention | 30 days (declared; the cleanup job is not implemented yet) |
 | Concurrent runs per workflow | 1 by default |
 | Queued runs per workflow | 1000, then `429` |
+| Queued runs per workspace | 5000, then `429` |

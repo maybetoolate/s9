@@ -54,7 +54,7 @@ describe('auth service boundary', () => {
     const response = await app.inject({
       method: 'GET',
       url: '/api/me',
-      headers: { cookie: 'flowforge.session_token=not-a-real-session' },
+      headers: { cookie: 's9.session_token=not-a-real-session' },
     });
 
     expect(response.statusCode).toBe(401);
@@ -91,7 +91,7 @@ describe('auth service boundary', () => {
       body: new URLSearchParams({
         grant_type: 'client_credentials',
         scope: 'users:read',
-        resource: process.env.AUTH_API_RESOURCE ?? 'urn:flowforge:api',
+        resource: process.env.AUTH_API_RESOURCE ?? 'urn:s9:api',
       }),
     });
     expect(tokenResponse.status).toBe(200);

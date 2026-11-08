@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { signWebhookPayload } from '@flowforge/core';
+import { signWebhookPayload } from '@s9/core';
 import {
   buildServer,
   createPublishedWorkflow,
@@ -98,7 +98,7 @@ describe('execution pipeline', () => {
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
         'content-type': 'application/json',
-        'x-flowforge-signature': `t=${timestamp},v1=${signature}`,
+        'x-s9-signature': `t=${timestamp},v1=${signature}`,
         'idempotency-key': 'evt-1',
       },
       payload: body,
@@ -114,7 +114,7 @@ describe('execution pipeline', () => {
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
         'content-type': 'application/json',
-        'x-flowforge-signature': `t=${timestamp},v1=${signature}`,
+        'x-s9-signature': `t=${timestamp},v1=${signature}`,
         'idempotency-key': 'evt-1',
       },
       payload: body,
@@ -162,7 +162,7 @@ describe('execution pipeline', () => {
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
         'content-type': 'application/json',
-        'x-flowforge-signature': `t=${timestamp},v1=${'0'.repeat(64)}`,
+        'x-s9-signature': `t=${timestamp},v1=${'0'.repeat(64)}`,
       },
       payload: JSON.stringify({ name: 'Ada' }),
     });
@@ -188,7 +188,7 @@ describe('execution pipeline', () => {
       url: `/webhooks/${workflow.webhookSlug}`,
       headers: {
         'content-type': 'application/json',
-        'x-flowforge-signature': `t=${timestamp},v1=${signature}`,
+        'x-s9-signature': `t=${timestamp},v1=${signature}`,
       },
       payload: body,
     });
@@ -572,7 +572,7 @@ describe('execution pipeline', () => {
 
     // The signature is the hex HMAC-SHA256 of "<timestamp>.<body>", keyed with
     // the endpoint secret, exactly like an external sender would compute it.
-    const signatureHeader = body.request.headers['x-flowforge-signature'];
+    const signatureHeader = body.request.headers['x-s9-signature'];
     expect(signatureHeader).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
 
     const db = getPool();

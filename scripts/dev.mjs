@@ -66,10 +66,10 @@ if (!existsSync(resolve(root, '.env'))) {
   process.exit(1);
 }
 
-console.log('Starting FlowForge in development mode. Press Ctrl+C to stop.\n');
+console.log('Starting s9 in development mode. Press Ctrl+C to stop.\n');
 
-run('auth', 'pnpm', ['--filter', '@flowforge/server', 'dev:auth']);
-run('api', 'pnpm', ['--filter', '@flowforge/server', 'dev:api']);
-run('worker', 'pnpm', ['--filter', '@flowforge/server', 'dev:worker']);
-run('scheduler', 'pnpm', ['--filter', '@flowforge/server', 'dev:scheduler']);
-run('web', 'pnpm', ['--filter', '@flowforge/web', 'dev']);
+run('auth', 'pnpm', ['--filter', '@s9/server', 'dev:auth']);
+run('api', 'pnpm', ['--filter', '@s9/server', 'dev:api']);
+run('worker', 'pnpm', ['--filter', '@s9/server', 'dev:worker']);
+run('scheduler', 'pnpm', ['--filter', '@s9/server', 'dev:scheduler']);
+run('web', 'pnpm', ['--filter', '@s9/web', 'dev']);

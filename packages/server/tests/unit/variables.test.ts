@@ -7,7 +7,7 @@ import {
   stripControlCharacters,
   VariableResolutionError,
   type VariableContext,
-} from '@flowforge/core';
+} from '@s9/core';
 
 /**
  * Variable mapping rules:

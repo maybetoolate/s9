@@ -18,8 +18,8 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   if (body !== undefined) requestHeaders.set('content-type', 'application/json');
 
   const cookieStore = await cookies();
-  const cookie = cookieStore.get('flowforge.session_token')?.value;
-  if (cookie) requestHeaders.set('cookie', `flowforge.session_token=${cookie}`);
+  const cookie = cookieStore.get('s9.session_token')?.value;
+  if (cookie) requestHeaders.set('cookie', `s9.session_token=${cookie}`);
 
   const response = await fetch(`${serverApiUrl()}${path}`, {
     ...rest,

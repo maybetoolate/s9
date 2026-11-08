@@ -10,12 +10,12 @@ COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 
-RUN pnpm install --frozen-lockfile --filter @flowforge/core --filter @flowforge/server
+RUN pnpm install --frozen-lockfile --filter @s9/core --filter @s9/server
 
 COPY packages/core packages/core
 COPY packages/server packages/server
 
-RUN pnpm --filter @flowforge/core build && pnpm --filter @flowforge/server build
+RUN pnpm --filter @s9/core build && pnpm --filter @s9/server build
 
 # Runtime stage.
 FROM node:22-alpine AS runtime

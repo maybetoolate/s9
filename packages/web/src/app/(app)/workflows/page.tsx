@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Plus, Workflow as WorkflowIcon } from 'lucide-react';
-import type { Paginated, WorkflowSummaryDto } from '@flowforge/core';
+import type { Paginated, WorkflowSummaryDto } from '@s9/core';
 import { api } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { Button } from '@/components/ui/button';

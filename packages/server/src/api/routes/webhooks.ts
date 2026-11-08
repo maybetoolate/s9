@@ -4,7 +4,7 @@ import {
   LIMITS,
   payloadDigest,
   verifyWebhookSignature,
-} from '@flowforge/core';
+} from '@s9/core';
 import { getWebhookEndpointBySlug, getWorkflowById, countRunningExecutions } from '../../db/repo.js';
 import type { WebhookEndpointRow } from '../../db/rows.js';
 import { getPool } from '../../db/pool.js';
@@ -28,7 +28,7 @@ import { decrypt } from '../../lib/secrets.js';
  * after every workflow action finished.
  */
 
-const SIGNATURE_HEADER = 'x-flowforge-signature';
+const SIGNATURE_HEADER = 'x-s9-signature';
 const IDEMPOTENCY_HEADER = 'idempotency-key';
 const EVENT_ID_HEADER = 'x-event-id';
 

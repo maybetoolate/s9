@@ -1,4 +1,4 @@
-name: flowforge
+name: s9
 
 services:
   # A local sink for the demo workflow. It accepts the notification delivery
@@ -13,9 +13,9 @@ services:
   postgres:
     image: postgres:18-alpine
     environment:
-      POSTGRES_USER: flowforge
-      POSTGRES_PASSWORD: flowforge
-      POSTGRES_DB: flowforge
+      POSTGRES_USER: s9
+      POSTGRES_PASSWORD: s9
+      POSTGRES_DB: s9
     ports:
       - "55432:5432"
     volumes:
@@ -23,7 +23,7 @@ services:
       # volume is mounted at the parent directory.
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flowforge -d flowforge"]
+      test: ["CMD-SHELL", "pg_isready -U s9 -d s9"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -52,7 +52,7 @@ services:
       - "8080:8080"
     environment:
       # Only show the containers that belong to this Compose project.
-      DOZZLE_FILTER: label=com.docker.compose.project=flowforge
+      DOZZLE_FILTER: label=com.docker.compose.project=s9
       DOZZLE_LEVEL: info
       DOZZLE_TAILSIZE: "300"
       DOZZLE_NO_ANALYTICS: "true"
@@ -79,7 +79,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
-      DATABASE_URL: postgres://flowforge:flowforge@postgres:5432/flowforge
+      DATABASE_URL: postgres://s9:s9@postgres:5432/s9
       # The shared environment contract requires these even though the auth
       # service itself does not use the queue or the encryption key.
       REDIS_URL: redis://redis:6379
@@ -89,11 +89,11 @@ services:
       AUTH_HOST: 0.0.0.0
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
       SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
-      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-flowforge-api}
-      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-flowforge-api-local-service-secret}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-s9-api}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-s9-api-local-service-secret}
       AUTH_CLIENT_SCOPES: users:read sessions:validate
       AUTH_SERVICE_TOKEN_TTL: "300"
-      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:flowforge:api}
+      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:s9:api}
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,16 +106,16 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
-      DATABASE_URL: postgres://flowforge:flowforge@postgres:5432/flowforge
+      DATABASE_URL: postgres://s9:s9@postgres:5432/s9
       REDIS_URL: redis://redis:6379
       API_PORT: "4000"
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:4100}
       WEB_PUBLIC_URL: ${WEB_PUBLIC_URL:-http://localhost:3000}
       AUTH_INTERNAL_URL: http://auth:4001
-      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-flowforge-api}
-      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-flowforge-api-local-service-secret}
+      AUTH_CLIENT_ID: ${AUTH_CLIENT_ID:-s9-api}
+      AUTH_CLIENT_SECRET: ${AUTH_CLIENT_SECRET:-s9-api-local-service-secret}
       AUTH_CLIENT_SCOPES: users:read sessions:validate
-      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:flowforge:api}
+      AUTH_API_RESOURCE: ${AUTH_API_RESOURCE:-urn:s9:api}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Zm9vLWZsb3ctbG9jYWwtZW5jcnlwdGlvbi1rZXktMDAwMDA=}
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
       SESSION_SECRET: ${SESSION_SECRET:-replace-me-with-a-32-character-random-string}
@@ -141,7 +141,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
-      DATABASE_URL: postgres://flowforge:flowforge@postgres:5432/flowforge
+      DATABASE_URL: postgres://s9:s9@postgres:5432/s9
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Zm9vLWZsb3ctbG9jYWwtZW5jcnlwdGlvbi1rZXktMDAwMDA=}
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}
@@ -166,7 +166,7 @@ services:
     environment:
       NODE_ENV: production
       LOG_LEVEL: info
-      DATABASE_URL: postgres://flowforge:flowforge@postgres:5432/flowforge
+      DATABASE_URL: postgres://s9:s9@postgres:5432/s9
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-Zm9vLWZsb3ctbG9jYWwtZW5jcnlwdGlvbi1rZXktMDAwMDA=}
       ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-key-1}

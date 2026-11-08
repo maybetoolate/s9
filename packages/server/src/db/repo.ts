@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ExecutionStatus, StepStatus, TriggerType, WorkflowDefinition, WorkflowStatus } from '@flowforge/core';
+import type { ExecutionStatus, StepStatus, TriggerType, WorkflowDefinition, WorkflowStatus } from '@s9/core';
 import { getPool } from './pool.js';
 import type {
   AuditEventRow,

@@ -1,0 +1,203 @@
+*s9.txt*        A Neovim companion for a self-hosted s9 instance
+
+==============================================================================
+CONTENTS                                                    *s9-contents*
+
+  1. Introduction ....................................... |s9-intro|
+  2. Requirements ....................................... |s9-requirements|
+  3. Setup .............................................. |s9.setup()|
+  4. Commands ........................................... |:S9|
+  5. Workflow view ...................................... |s9-workflow-view|
+  6. Execution view ..................................... |s9-execution-view|
+  7. Configuration ...................................... |s9-config|
+  8. Security ........................................... |s9-security|
+  9. Health ............................................. |s9-health|
+ 10. Limitations ........................................ |s9-limitations|
+
+==============================================================================
+1. INTRODUCTION                                             *s9-intro*
+
+s9.nvim lists workflows, starts production and test runs, watches
+executions, and exposes the recovery operations of s9 without leaving
+the editor:
+
+  - retry a failed step in place, without repeating successful steps
+  - rerun a whole execution, with an explicit warning
+  - resolve a step whose outcome is unknown, with a reason
+  - cancel a queued or running execution
+
+The plugin has no Lua dependencies. Pickers use |vim.ui.select|, so Telescope,
+fzf-lua, snacks.nvim or dressing.nvim are used automatically when installed.
+
+==============================================================================
+2. REQUIREMENTS                                        *s9-requirements*
+
+  - Neovim 0.10 or newer (|vim.system()|, |vim.uv|, |vim.empty_dict()|)
+  - curl on PATH (the plugin runs requests in an asynchronous curl process)
+  - a running s9 API (default: http://localhost:4100)
+
+==============================================================================
+3. SETUP                                                  *s9.setup()*
+
+require("s9").setup({ opts })
+
+Optional. The defaults match the development stack in the s9 README:
+
+>lua
+  require("s9").setup({
+    base_url = "http://localhost:4100",
+    web_url = "http://localhost:3000",
+  })
+<
+
+Without a plugin manager:
+
+>lua
+  vim.opt.runtimepath:append("~/Projects/s9/packages/neovim")
+  require("s9").setup()
+<
+
+==============================================================================
+4. COMMANDS                                                    *:S9*
+
+:S9 [subcommand] [argument]
+                        Run a subcommand. Without a subcommand it lists
+                        workflows. Completion offers the subcommands.
+
+  :S9 login [email]
+                        Sign in. The password is read with |inputsecret()| and
+                        is never stored. The returned session cookie is saved
+                        in stdpath("data")/s9/session.json with mode
+                        0600.
+  :S9 logout     End the session on the server and remove the cookie.
+  :S9 status     Show the signed-in user, workspace and role.
+  :S9 workflows [search]
+                        Pick a workflow, optionally filtered by search text.
+  :S9 runs [workflow-id]
+                        Pick an execution, optionally scoped to a workflow.
+  :S9 execution {id}
+                        Open one execution by id.
+  :S9 run {workflow-id}
+                        Start a production run. Prompts for a JSON input.
+  :S9 test {workflow-id}
+                        Start a test run against the draft. Side effects are
+                        simulated by the engine.
+  :S9 dashboard  Open the web dashboard in a browser.
+  :S9 help       Open the command and key reference in a float.
+
+==============================================================================
+5. WORKFLOW VIEW                                  *s9-workflow-view*
+
+Opened by |:S9| `workflows`. The buffer is a read-only float.
+
+  r       Start a production run (prompts for a JSON object, default `{}`).
+  t       Start a test run against the draft (side effects are simulated).
+  p       Pause a published workflow, or resume a paused one.
+  R       List the executions of this workflow.
+  v       Browse published versions and inspect a definition.
+  o       Open the workflow in the web app (see |s9-config|).
+  gr      Refresh the view.
+  q       Close the view. <Esc> does the same.
+
+A run opens the execution view immediately.
+
+==============================================================================
+6. EXECUTION VIEW                                *s9-execution-view*
+
+Opened by |:S9| `runs`, `execution`, or by starting a run.
+
+  r       Retry a failed or unknown step in place. Successful steps are not
+          repeated. When several steps qualify, a picker asks which one.
+  R       Rerun the whole execution. Every step runs again; the confirmation
+          says so.
+  x       Resolve a step whose outcome is unknown: pick succeeded or failed,
+          then give a reason (at least 3 characters, recorded in the audit
+          log).
+  c       Cancel a queued or running execution.
+  o       Open the execution in the web app.
+  gr      Refresh the view.
+  q       Close the view. <Esc> does the same.
+
+The view shows the status, workflow version, timings, every step with its
+attempts and error classification, the timeline, and the redacted input and
+output. While the execution is queued, running or retrying, the view polls the
+API every `poll_interval_ms` (see |s9-config|) and stops at a terminal
+state or when the window is closed.
+
+==============================================================================
+7. CONFIGURATION                                             *s9-config*
+
+All keys are optional:
+
+  base_url            string   API base URL, without a trailing slash.
+                               Default: "http://localhost:4100"
+  web_url             string   Web app base URL, used by "open in browser".
+                               Default: "http://localhost:3000"
+  timeout_ms          number   Per-request timeout. Default: 15000
+  poll_interval_ms    number   Refresh interval for live executions.
+                               Default: 2000
+  page_size           number   Items requested per list call, max 100.
+                               Default: 50
+  border              string   Floating window border. Default: "rounded"
+  width, height       number   Ratio of the editor (0..1) or absolute size.
+                               Defaults: 0.85 and 0.8
+  open_cmd            table    argv prefix used to open a URL, for example
+                               { "firefox" }. Default: platform opener.
+  keymaps             table    Opt-in global keymaps, see below.
+
+                                                     *s9-keymaps*
+Global keymaps are opt-in:
+
+>lua
+  require("s9").setup({
+    keymaps = {
+      workflows = "<leader>fw",
+      runs = "<leader>fr",
+      login = "<leader>fl",
+      status = "<leader>fs",
+      dashboard = "<leader>fd",
+      logout = false,
+    },
+  })
+<
+
+`false` (or omitting the key) leaves that action unmapped. Buffer-local keys in
+the views are always set.
+
+==============================================================================
+8. SECURITY                                                  *s9-security*
+
+  - The password is sent once to POST /api/auth/sign-in/email and is never
+    written to disk.
+  - The session cookie is stored in
+    stdpath("data")/s9/session.json with mode 0600, created that way
+    from the start.
+  - The cookie travels in a temporary 0600 header file passed to curl as
+    `-H @file`, never in the process arguments, which /proc exposes to other
+    local users.
+  - Response bodies go to 0600 temporary files that are removed after the
+    callback.
+  - Authenticated writes send the `Origin` of `web_url`. Better-Auth rejects
+    cookie-authenticated POSTs without a trusted origin (error
+    MISSING_OR_NULL_ORIGIN). Set `web_url` to the API's WEB_PUBLIC_URL.
+  - |:S9| `logout` clears the cookie on both sides.
+
+==============================================================================
+9. HEALTH                                                    *s9-health*
+
+:checkhealth s9   Checks the Neovim version, curl, both URLs, the stored
+                        session and its permissions, and API readiness
+                        (/health and /health/ready).
+
+==============================================================================
+10. LIMITATIONS                                          *s9-limitations*
+
+  - No workflow editing. The plugin reads definitions and starts runs; use the
+    web builder to change a draft.
+  - One page per list (page_size items, at most 100).
+  - No credential or webhook-secret management.
+  - Test runs simulate side effects; production runs perform real actions.
+  - Views are read-only floats that rely on |vim.ui| for pickers and inputs.
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:

@@ -9,7 +9,7 @@ import type { Redis } from 'ioredis';
  * against a retained completed job.
  */
 
-export const EXECUTION_QUEUE = 'flowforge-executions';
+export const EXECUTION_QUEUE = 's9-executions';
 
 export interface ExecutionJobData {
   executionId: string;
@@ -56,7 +56,7 @@ export interface EnqueueExecutionOptions {
  *
  * Publishing twice with the same job id is harmless: BullMQ ignores the
  * duplicate, and the database lease plus guarded transitions make a duplicate
- * delivery harmless to FlowForge state.
+ * delivery harmless to s9 state.
  */
 export async function enqueueExecution(
   queue: Queue<ExecutionJobData>,

@@ -1,39 +1,46 @@
 # Architecture
 
-FlowForge is a modular monolith API plus a separate worker process, with PostgreSQL as the durable system of record and
-Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boundaries stay clear.
+s9 is a modular monolith API plus separate worker, scheduler and auth processes, with PostgreSQL as the durable
+system of record and Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boundaries stay clear.
 
 ```
-┌────────────┐        ┌──────────────────────────────────────────────┐
-│  Browser   │        │  Next.js web app (packages/web)             │
-│            │◀──────▶│  dashboard · builder · execution history     │
-└────────────┘        └───────────────────────┬──────────────────────┘
-                                                │ REST (JSON)
-                                                ▼
-                        ┌───────────────────────────────────────────────┐
+   ┌────────────┐        ┌──────────────────────────────────────────────┐
+   │  Browser   │        │  Next.js web app (packages/web)              │
+   │            │◀──────▶│  dashboard · builder · execution history     │
+   └────────────┘        └───────────────────────┬──────────────────────┘
+                                                 │ REST (JSON)
+                                                 ▼
+                       ┌───────────────────────────────────────────────┐
    external sender ───▶│  Node.js API (packages/server)                │
-   (webhook)           │  auth · CRUD · validation · publish · intake │
-                        └───────┬───────────────────────────┬───────────┘
-                                │ transaction              │ read
-                                ▼                           ▼
+   (webhook)           │  auth proxy · CRUD · validation · publish ·   │
+                       │  intake                                       │
+                       └───────┬───────────────────────────┬───────────┘
+                               │  transaction              │ read
+                               ▼                           ▼
    ┌────────────────────────────────────┐      ┌───────────────────────────┐
    │  PostgreSQL                        │◀────▶│  Worker                   │
    │  workflows · versions · drafts     │      │  claims · runs · persists │
    │  executions · steps · attempts     │      └───────────┬───────────────┘
    │  outbox · audit · trigger events   │                  │ claim
    │  schedules · credentials           │      ┌───────────▼───────────────┐
-   └────────────────────────────────────┘      │  Redis + BullMQ          │
-                ▲                               │  execution continuations │
-                │                               └───────────────────────────┘
+   └────────────────────────────────────┘      │  Redis + BullMQ           │
+                ▲                              │  execution continuations  │
+                │                              └───────────────────────────┘
                 │ durable publication
    ┌────────────┴───────────┐
-   │  Outbox dispatcher      │  claims rows with FOR UPDATE SKIP LOCKED
-   │  + stale-run reconciler │  re-enqueues lost work, recovers leases
+   │  Outbox dispatcher     │  claims rows with FOR UPDATE SKIP LOCKED
+   │  + stale-run reconciler│  re-enqueues lost work, recovers leases
    └────────────────────────┘
 
    ┌───────────────────────────────────────────────────────────────┐
    │  Scheduler process                                            │
    │  finds due schedule occurrences → creates deduplicated runs   │
+   └───────────────────────────────────────────────────────────────┘
+
+   ┌───────────────────────────────────────────────────────────────┐
+   │  Auth service (packages/server/src/auth)                      │
+   │  Better-Auth tables · sessions · OAuth2 service tokens        │
+   │  reached by the API over the internal network                 │
    └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +49,8 @@ Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boun
 | Component | Responsibilities | Must not do |
 | --- | --- | --- |
 | Next.js web app | Workflow editor, dashboard, execution views | Execute workflow steps in the browser |
-| Node.js API | Auth, CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
+| Node.js API | Auth proxy, CRUD, validation, publish, webhook intake, run requests | Perform long-running workflow work inline |
+| Auth service | Own the Better-Auth tables, sign sessions, issue and verify OAuth2 service tokens | Serve workflow traffic or expose the session tables to other processes |
 | PostgreSQL | Durable definitions, versions, executions, attempts, audit events | Rely on queue state as the only record |
 | Redis + BullMQ | Deliver execution continuations, delayed retries, worker concurrency | Become the source of truth for business state |
 | Worker | Load the pinned version, execute steps, persist state transitions | Trust arbitrary workflow input or skip state checks |
@@ -51,8 +59,30 @@ Redis/BullMQ as the delivery mechanism. Deployment stays simple; the module boun
 
 ## How the web app reaches the API
 
-The browser only ever talks to the web app. The web app forwards the call to the API through a route handler
-(`src/app/api/[...path]`), and the server components call the API directly over the internal address.
+The browser only ever talks to the web app; the API address is never part of the browser bundle. There are two paths,
+and they use two deliberately separate clients:
+
+| Caller | Client | Path to the API |
+| --- | --- | --- |
+| Client components | `src/lib/api.ts` | Relative `/api/...` request to the web origin → catch-all proxy `src/app/api/[...path]/route.ts` |
+| Server components | `src/lib/api-server.ts` | Direct call to the internal address, with the request's session cookie forwarded |
+
+The browser client fetches a relative path with `credentials: 'include'`, so the request stays on the web origin and the
+session cookie travels with it. The route handler rewrites `/api/<rest>` to `<api base>/api/<rest>`. The server client
+skips that hop: a server component has no cookie jar, so it reads `s9.session_token` through `next/headers` and
+sets the `cookie` header itself. That is also why `api.ts` must stay free of server-only imports — client components
+share it.
+
+The proxy sets `dynamic = 'force-dynamic'` so Next never caches or pre-renders it. It forwards the method, the headers
+and the body (buffered with `arrayBuffer()`), and adds `x-forwarded-host` with the original host so the API still logs
+the real client address. The upstream response is passed back as a stream with its status, status text and headers
+intact. `set-cookie` is copied per header with `getSetCookie()` instead of being flattened, because the session cookie's
+attributes (`Path`, `HttpOnly`, `SameSite`, `Secure`) must survive the hop unchanged. If the API cannot be reached, the
+proxy answers `502` with the normal error envelope and `code: "api_unreachable"`.
+
+The proxy is transport, not an authorization boundary. It does not check the session, filter a response or decide what
+a user may see; every route is authorized by the API against the session cookie. That is also why the server-side
+client can call the internal address directly without weakening anything.
 
 The address of the API is resolved **when the request arrives**, not at build time. A Next.js rewrite would bake the
 destination into the routes manifest, which would tie the image to one environment; the proxy keeps a single image
@@ -63,8 +93,27 @@ usable everywhere:
 | Host development | — | `http://localhost:4100` |
 | Docker Compose | `http://api:4000` | `http://localhost:4100` |
 
-The proxy forwards the method, the headers and the body, and copies the response back verbatim — including the session
-cookie, whose attributes must survive the hop unchanged.
+Both variables are read from `process.env` on every call in `src/lib/api-url.ts`. The internal address is preferred when
+it is set, `API_PUBLIC_URL` is the fallback, and `http://localhost:4100` is the last resort. In host development the API
+is reached on its published port; in Compose the service name `api` resolves inside the network. The public address is
+also what the API uses to build webhook URLs handed back to the user.
+
+Authentication has one extra hop. The auth service (`packages/server/src/auth`) owns the Better-Auth tables and the
+session protocol; the API keeps the public `/api/auth/*` surface and proxies it to `AUTH_INTERNAL_URL`, so the browser,
+the web proxy and existing clients never need the internal address. The public origin stays `WEB_PUBLIC_URL`, which is
+what Better-Auth uses to build URLs and scope the cookie. The `Set-Cookie` therefore travels auth service → API → web
+proxy unchanged and is stored for the web origin. The cookie is `s9.session_token`, `HttpOnly` and `SameSite=Lax`;
+it is marked `Secure` only when `WEB_PUBLIC_URL` is an `https://` URL, so a plain-HTTP local deployment still works.
+
+On every authenticated request the API validates the user's cookie with the auth service
+(`POST /internal/sessions/validate`) and reads the display profile for `/api/me` from `GET /internal/users/:id`. Those
+internal calls use an OAuth2 client-credentials access token (`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`, scopes
+`users:read sessions:validate`) that the API caches until shortly before it expires. The API never reads the auth
+tables directly, and the auth service is not part of the browser-facing surface. `/health/ready` includes the auth
+service in its checks.
+
+Public webhook intake has a sibling runtime proxy (`src/app/webhooks/[slug]/route.ts`) that resolves the same address.
+It exists so a delivery can be tried from the browser; external senders post to the API's `API_PUBLIC_URL` directly.
 
 ## The execution lifecycle
 
@@ -141,6 +190,7 @@ state and stops. It cannot produce an invalid transition.
 | The provider answers 429 or a transient 5xx | Bounded exponential backoff with jitter, honouring `Retry-After`. |
 | The provider answers a permanent 4xx | The run fails promptly with a sanitised, actionable error. |
 | The scheduler restarts | Due occurrences are reconciled from the durable schedule records. |
+| The auth service is unreachable | The API answers `503 auth_unavailable`, and `/health/ready` reports the auth check as failed. |
 | A workflow is edited after publication | Existing executions stay pinned to their original version. |
 | A retry is requested twice | The retry-request idempotency key produces one recovery. |
 
@@ -160,6 +210,7 @@ the authoritative schema.
 | Entity | Purpose |
 | --- | --- |
 | `workspaces`, `workspace_memberships` | Ownership boundary for workflows and credentials |
+| `user`, `session`, `account`, `oauth*` tables | Identity, sessions and service credentials, owned exclusively by the auth service |
 | `workflows`, `workflow_drafts`, `workflow_versions` | Stable identity, an editable draft and immutable snapshots |
 | `credentials` | Provider secrets, encrypted, separate from the definitions |
 | `webhook_endpoints` | The intake URL, the signing secret and the rotation metadata |

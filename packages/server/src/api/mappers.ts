@@ -11,7 +11,7 @@ import type {
   WorkflowDraftDto,
   WorkflowSummaryDto,
   WorkflowVersionDto,
-} from '@flowforge/core';
+} from '@s9/core';
 import type {
   AuditEventRow,
   CredentialRow,

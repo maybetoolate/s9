@@ -15,6 +15,7 @@ rejected by the engine, and a terminal state is never overwritten by a late dupl
 | `running` | `cancelled` | An editor, between steps | Required |
 | `retrying` | `running` | The worker, on the next continuation | Attempt record |
 | `retrying` | `failed` | The worker: the attempts were exhausted | Yes |
+| `retrying` | `cancelled` | An editor | Required |
 | `failed` | `queued` | An editor: a recovery operation with a retry-request idempotency key | Required |
 | `succeeded` | — | Terminal | — |
 | `cancelled` | — | Terminal | — |
@@ -38,7 +39,8 @@ rejected by the engine, and a terminal state is never overwritten by a late dupl
 ```
 
 `cancelled` can be reached from `queued`, `running` and `retrying`. A running attempt is never interrupted: it
-completes and is recorded, and the remaining steps are skipped.
+completes and is recorded, and the remaining steps are skipped. The central transition table also permits
+`retrying → queued` and `queued → failed` for bookkeeping; the worker does not produce those edges.
 
 ## Step
 

@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge';
-import type { ExecutionStatus, StepStatus, WorkflowStatus } from '@flowforge/core';
+import type { ExecutionStatus, StepStatus, WorkflowStatus } from '@s9/core';
 
 type Variant = 'default' | 'secondary' | 'outline' | 'success' | 'warning' | 'destructive' | 'muted';
 

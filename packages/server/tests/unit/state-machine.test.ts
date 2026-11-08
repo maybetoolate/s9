@@ -6,7 +6,7 @@ import {
   isTerminalExecutionStatus,
   isTerminalStepStatus,
   workflowAcceptsNewExecutions,
-} from '@flowforge/core';
+} from '@s9/core';
 
 /**
  * The state machine is the contract of the product: every failure has to be

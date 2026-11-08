@@ -1,5 +1,5 @@
 {
-  "name": "@flowforge/server",
+  "name": "@s9/server",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "^1.7.18",
-    "@flowforge/core": "workspace:*",
+    "@s9/core": "workspace:*",
     "better-auth": "^1.7.18",
     "bullmq": "^5.62.0",
     "fastify": "^5.6.2",

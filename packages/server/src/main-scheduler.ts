@@ -4,7 +4,7 @@ import { closePool } from './db/pool.js';
 import { runSchedulerOnce } from './engine/scheduler.js';
 import { pruneOutboxEvents } from './db/repo.js';
 import { getPool } from './db/pool.js';
-import { LIMITS } from '@flowforge/core';
+import { LIMITS } from '@s9/core';
 
 /**
  * The scheduler process.

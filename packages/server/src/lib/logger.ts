@@ -1,6 +1,6 @@
 import { pino, type Logger } from 'pino';
 import { env } from '../config/env.js';
-import { REDACTED } from '@flowforge/core';
+import { REDACTED } from '@s9/core';
 
 /**
  * Structured logging.
@@ -33,7 +33,7 @@ export function loggerOptions(base: Record<string, unknown> = {}) {
   const config = env();
   return {
     level: config.LOG_LEVEL,
-    base: { service: 'flowforge', ...base },
+    base: { service: 's9', ...base },
     redact: { paths: redactPaths, censor: REDACTED },
     formatters: {
       level: (label: string) => ({ level: label }),

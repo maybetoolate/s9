@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import type { ActionTypeDto, WorkflowDetailDto } from '@flowforge/core';
+import type { ActionTypeDto, WorkflowDetailDto } from '@s9/core';
 import { api, ApiRequestError } from '@/lib/api-server';
 import { requireSession } from '@/lib/session';
 import { WorkflowBuilder } from './workflow-builder';

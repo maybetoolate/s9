@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
-import type { WorkflowDefinition } from '@flowforge/core';
+import type { WorkflowDefinition } from '@s9/core';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input, Label, Textarea } from '@/components/ui/input';
@@ -113,7 +113,7 @@ export function NewWorkflowForm() {
           type: 'send_email',
           config: {
             provider: 'mailpit',
-            from: 'FlowForge <no-reply@flowforge.local>',
+            from: 's9 <no-reply@s9.local>',
             to: '{{trigger.body.email}}',
             subject: 'We received your message',
             body: 'Thanks for reaching out.',

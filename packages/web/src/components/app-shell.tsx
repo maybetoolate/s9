@@ -23,7 +23,7 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
           <span className="flex size-7 items-center justify-center rounded-md bg-[var(--color-primary)] text-[var(--color-primary-foreground)]">
             <Activity className="size-4" />
           </span>
-          <span className="text-sm font-semibold tracking-tight">FlowForge</span>
+          <span className="text-sm font-semibold tracking-tight">s9</span>
         </Link>
 
         <nav className="flex flex-col gap-1">
@@ -52,7 +52,7 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
         <header className="flex h-14 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-card)] px-6">
           <div className="flex items-center gap-2 md:hidden">
             <Activity className="size-5 text-[var(--color-primary)]" />
-            <span className="text-sm font-semibold">FlowForge</span>
+            <span className="text-sm font-semibold">s9</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
             {email ? <span className="text-sm text-[var(--color-muted-foreground)]">{email}</span> : null}

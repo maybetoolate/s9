@@ -11,7 +11,7 @@ import {
   validateHttpDestination,
   validateResolvedAddress,
   verifyWebhookSignature,
-} from '@flowforge/core';
+} from '@s9/core';
 
 /**
  * Security behaviour: webhook signatures, SSRF protection and redaction.

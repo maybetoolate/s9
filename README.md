@@ -1,8 +1,8 @@
-# FlowForge
+# s9
 
 A small, self-hostable workflow engine for technical operators who need **execution transparency** and **safe recovery**.
 
-Configure a process once, run it repeatedly, and understand every run. FlowForge persists each execution and each
+Configure a process once, run it repeatedly, and understand every run. s9 persists each execution and each
 step result, so you can see exactly what happened and recover from failures without silent repeats.
 
 It is deliberately **not** a Zapier or n8n replacement: it does less, but every run is inspectable and every failure is
@@ -56,14 +56,14 @@ pnpm db:seed
 pnpm dev
 ```
 
-The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, the auth service on
-<http://localhost:4001> (internal only), and the mail catcher on <http://localhost:8025>.
+The web app runs on <http://localhost:3000>, the API on <http://localhost:4100>, the auth service on port `4001`
+(internal; not published by Compose), and the mail catcher on <http://localhost:8025>.
 
 Sign in with the seeded operator:
 
 ```
-email:    operator@flowforge.local
-password: flowforge-demo-password
+email:    operator@s9.local
+password: s9-demo-password
 ```
 
 ### Everything in Docker
@@ -76,13 +76,14 @@ docker compose up --build -d
 docker compose exec api node packages/server/dist/cli-seed.js
 ```
 
-This starts `web`, `api`, `auth`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit` and `sink`. The API and the auth
-service apply migrations on start (serialised by an advisory lock), so they can start in any order.
+This starts `web`, `api`, `auth`, `worker`, `scheduler`, `postgres`, `redis`, `mailpit`, `sink` and `dozzle`. The API and
+the auth service apply migrations on start (serialised by an advisory lock), so they can start in any order.
 
 The auth service owns the Better-Auth tables. It is reachable only on the Compose network; its port is not published to
 the host. The API talks to it with an OAuth2 client-credentials access token issued by Better-Auth's OAuth provider
 (`AUTH_CLIENT_ID` / `AUTH_CLIENT_SECRET`) and caches the short-lived token until it expires. The service client is
 created on start from those environment variables, so rotating the secret is a matter of changing it and restarting.
+The default in `.env.example` is for local development only.
 
 The seed has to run in the same environment as the worker: it stores the demo notification destination in the workflow
 definition, and the worker has to be able to reach it. The seed warns when the destination is not reachable.
@@ -124,7 +125,7 @@ SIG=$(printf '%s.%s' "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex |
 curl -i -X POST "http://localhost:4100/webhooks/<slug>" \
   -H "content-type: application/json" \
   -H "idempotency-key: demo-1" \
-  -H "x-flowforge-signature: t=$TS,v1=$SIG" \
+  -H "x-s9-signature: t=$TS,v1=$SIG" \
   -d "$BODY"
 ```
 
@@ -132,7 +133,7 @@ You get `202 Accepted` with an execution id. Open the execution in the UI to wat
 request with the same idempotency key to see the duplicate being rejected with `200`.
 
 The signature is computed by the **sender**: it is the hex HMAC-SHA256 of `<timestamp>.<body>`, keyed with the endpoint
-secret, sent as `X-FlowForge-Signature: t=<unix-ms>,v1=<hex>`. The secret is shown once when the endpoint is created;
+secret, sent as `X-S9-Signature: t=<unix-ms>,v1=<hex>`. The secret is shown once when the endpoint is created;
 if you no longer have it, rotate it in the workflow's **Webhook** tab. The same tab has a **Send a signed test
 delivery** button that signs and delivers a sample payload and shows you the exact request it sent.
 
@@ -144,13 +145,15 @@ delivery** button that signs and delivers a sample payload and shows you the exa
 packages/
   core/     shared domain logic: limits, state machine, definition schema,
             variable mapping, error taxonomy, schedule resolution, SSRF rules
-  server/   API, worker, scheduler, action adapters, migrations, tests
+  server/   API, auth service, worker, scheduler, action adapters, migrations, tests
   web/      Next.js app (dashboard, builder, execution history)
+  neovim/   companion Neovim plugin: workflows, runs and recovery
 docs/       architecture, API reference, operations guide, ADRs, limitations
 docker/     container images for the api, worker and web app
 ```
 
-The API and the worker share one codebase but run as separate processes, exactly as the blueprint requires.
+The auth service, the API, the worker and the scheduler share one codebase but run as separate processes, exactly as the
+blueprint requires.
 
 ---
 
@@ -162,8 +165,9 @@ The API and the worker share one codebase but run as separate processes, exactly
 | [docs/api.md](docs/api.md) | REST endpoints, the error envelope, webhook signature verification, pagination |
 | [docs/operations.md](docs/operations.md) | Local troubleshooting, queue inspection, database reset, metrics and alerts |
 | [docs/state-machines.md](docs/state-machines.md) | Every allowed transition and every guard |
-| [docs/limitations.md](docs/limitations.md) | What FlowForge does **not** do, and why |
+| [docs/limitations.md](docs/limitations.md) | What s9 does **not** do, and why |
 | [docs/adr/](docs/adr) | The decisions that shaped the system |
+| [packages/neovim/README.md](packages/neovim/README.md) | Install and use the Neovim companion plugin |
 
 ---
 
@@ -180,7 +184,7 @@ unauthenticated webhooks, ordered step execution, bounded retries, permanent fai
 manual resolution without editing attempt history, retry without repeating successful steps, one recovery for two
 simultaneous retry requests, immutable published versions, and workspace isolation.
 
-The integration tests need PostgreSQL and Redis; they use a dedicated `flowforge_test` database so they never touch
+The integration tests need PostgreSQL and Redis; they use a dedicated `s9_test` database so they never touch
 your development data.
 
 ---

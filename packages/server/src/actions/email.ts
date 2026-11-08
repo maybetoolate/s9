@@ -1,14 +1,14 @@
 import { z } from 'zod';
 import {
   EmailConfigSchema,
-  FlowForgeError,
+  S9Error,
   sanitizeErrorSummary,
   stripControlCharacters,
   type ActionContext,
   type ActionExecutor,
   type ActionResult,
   type ClassifiedError,
-} from '@flowforge/core';
+} from '@s9/core';
 import { env } from '../config/env.js';
 
 /**
@@ -29,56 +29,58 @@ const OutputSchema = z.object({
   simulated: z.boolean().optional(),
 });
 
-export function createEmailExecutor(): ActionExecutor {
-  return {
-    type: 'send_email',
-    configSchema: EmailConfigSchema,
-    outputSchema: OutputSchema,
-    // Sending an email is a side effect that cannot be undone.
-    safeToRepeat: false,
-    redactionKeys: ['credential', 'apiKey', 'body'],
+export class EmailExecutor implements ActionExecutor {
+  readonly type = 'send_email';
+  readonly configSchema = EmailConfigSchema;
+  readonly outputSchema = OutputSchema;
+  // Sending an email is a side effect that cannot be undone.
+  readonly safeToRepeat = false;
+  readonly redactionKeys = ['credential', 'apiKey', 'body'];
 
-    validateConfig(config: unknown) {
-      const parsed = EmailConfigSchema.safeParse(config ?? {});
-      if (!parsed.success) {
-        return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
-      }
-      return { ok: true, value: parsed.data };
-    },
+  validateConfig(config: unknown): { ok: true; value: unknown } | { ok: false; message: string } {
+    const parsed = EmailConfigSchema.safeParse(config ?? {});
+    if (!parsed.success) {
+      return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join('; ') };
+    }
+    return { ok: true, value: parsed.data };
+  }
 
-    async execute(context: ActionContext): Promise<ActionResult> {
-      const config = EmailConfigSchema.parse(context.input);
-      const to = stripControlCharacters(config.to);
-      const subject = stripControlCharacters(config.subject);
-      const from = stripControlCharacters(config.from);
+  async execute(context: ActionContext): Promise<ActionResult> {
+    const config = EmailConfigSchema.parse(context.input);
+    const to = stripControlCharacters(config.to);
+    const subject = stripControlCharacters(config.subject);
+    const from = stripControlCharacters(config.from);
 
-      if (context.simulate) {
-        return {
-          output: {
-            messageId: `simulated-${context.executionId}-${context.stepKey}`,
-            provider: config.provider,
-            accepted: true,
-            simulated: true,
-          },
-        };
-      }
-
-      const provider = config.provider;
-      if (provider === 'resend') {
-        return sendWithResend(context, config, { to, subject, from });
-      }
-      return sendWithLocalCatcher(context, config, { to, subject, from });
-    },
-
-    classifyError(error: unknown): ClassifiedError {
-      if (error instanceof FlowForgeError) return error.toClassified();
+    if (context.simulate) {
       return {
-        class: 'transient_provider',
-        message: sanitizeErrorSummary((error as Error)?.message ?? 'the email could not be sent'),
-        safeToRepeat: false,
+        output: {
+          messageId: `simulated-${context.executionId}-${context.stepKey}`,
+          provider: config.provider,
+          accepted: true,
+          simulated: true,
+        },
       };
-    },
-  };
+    }
+
+    const provider = config.provider;
+    if (provider === 'resend') {
+      return sendWithResend(context, config, { to, subject, from });
+    }
+    return sendWithLocalCatcher(context, config, { to, subject, from });
+  }
+
+  classifyError(error: unknown): ClassifiedError {
+    if (error instanceof S9Error) return error.toClassified();
+    return {
+      class: 'transient_provider',
+      message: sanitizeErrorSummary((error as Error)?.message ?? 'the email could not be sent'),
+      safeToRepeat: false,
+    };
+  }
+}
+
+export function createEmailExecutor(): ActionExecutor {
+  return new EmailExecutor();
 }
 
 interface NormalisedMessage {
@@ -94,7 +96,7 @@ async function sendWithResend(
 ): Promise<ActionResult> {
   const apiKey = context.credential?.secret;
   if (!apiKey) {
-    throw FlowForgeError.validation('the send_email action needs a Resend API key in a credential');
+    throw S9Error.validation('the send_email action needs a Resend API key in a credential');
   }
 
   const headers: Record<string, string> = {
@@ -124,16 +126,16 @@ async function sendWithResend(
   if (!response.ok) {
     const detail = sanitizeErrorSummary(await response.text().catch(() => ''), 300);
     if (response.status === 429) {
-      throw FlowForgeError.rateLimited(`the email provider replied with 429`, undefined, { detail });
+      throw S9Error.rateLimited(`the email provider replied with 429`, undefined, { detail });
     }
     if (response.status >= 500) {
-      throw new FlowForgeError('transient_provider', `the email provider replied with ${response.status}`, {
+      throw new S9Error('transient_provider', `the email provider replied with ${response.status}`, {
         safeToRepeat: false,
         status: response.status,
         details: { detail },
       });
     }
-    throw new FlowForgeError('permanent_provider', `the email provider replied with ${response.status}`, {
+    throw new S9Error('permanent_provider', `the email provider replied with ${response.status}`, {
       safeToRepeat: false,
       status: response.status,
       details: { detail },
@@ -179,7 +181,7 @@ async function sendWithLocalCatcher(
 
   if (!response.ok) {
     const detail = sanitizeErrorSummary(await response.text().catch(() => ''), 300);
-    throw new FlowForgeError('transient_provider', `the local mail catcher replied with ${response.status}`, {
+    throw new S9Error('transient_provider', `the local mail catcher replied with ${response.status}`, {
       safeToRepeat: false,
       status: response.status,
       details: { detail },
@@ -208,9 +210,9 @@ function wrapNetworkError(error: unknown, message: string): Error {
   const err = error as { name?: string; code?: string; message?: string };
   if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
     // The provider may still have accepted the message.
-    return FlowForgeError.timeout(`${message} (timeout)`, false);
+    return S9Error.timeout(`${message} (timeout)`, false);
   }
-  return new FlowForgeError('transient_provider', sanitizeErrorSummary(err.message ?? message), {
+  return new S9Error('transient_provider', sanitizeErrorSummary(err.message ?? message), {
     safeToRepeat: false,
   });
 }

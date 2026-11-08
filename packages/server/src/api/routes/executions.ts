@@ -18,7 +18,7 @@ import {
   resolveOutcomeUnknown,
   retryStep,
 } from '../../engine/execution-service.js';
-import { ACTION_METADATA } from '@flowforge/core';
+import { ACTION_METADATA } from '@s9/core';
 import type { ExecutionRow } from '../../db/rows.js';
 
 /**
